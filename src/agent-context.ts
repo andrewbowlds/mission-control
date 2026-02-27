@@ -81,6 +81,21 @@ Kanban-style project boards:
 - \`mc.trello.boards.list\` / \`mc.trello.boards.create\`
 - \`mc.trello.lists.create\` / \`mc.trello.cards.create\` / \`mc.trello.cards.update\` / \`mc.trello.cards.move\`
 
+## Notifications (mc.notifications.*)
+- \`mc.notifications.list\` — List notifications. Params: { read?: boolean, dismissed?: boolean, type?: string | string[], limit?: number }
+- \`mc.notifications.unreadCount\` — Get unread notification count
+- \`mc.notifications.markRead\` — Mark read. Params: { id: string }
+- \`mc.notifications.markAllRead\` — Mark all notifications read
+
+## Delegation (mc.delegations.*)
+Agent-to-agent task delegation with approval gates:
+- \`mc.delegations.request\` — Request delegation. Params: { taskId: string, fromAgentId: string, toAgentId: string, reason?: string, requiresApproval?: boolean }
+- \`mc.delegations.list\` — List delegations. Params: { taskId?: string, fromAgentId?: string, toAgentId?: string, status?: string }
+- \`mc.delegations.resolve\` — Approve/reject. Params: { id: string, approved: boolean, note?: string }
+- \`mc.delegations.cancel\` — Cancel pending delegation. Params: { id: string }
+- \`mc.delegations.suggestions\` — Get best agents to delegate to. Params: { taskId: string, topN?: number }
+- \`mc.delegations.autoDelegate\` — Auto-find best agent and request delegation. Params: { taskId: string, fromAgentId: string, reason?: string }
+
 ## Intelligence (mc.intelligence.*)
 Smart routing and agent performance:
 - \`mc.intelligence.recommend\` — Get best agent for a task. Params: { taskId: string }
@@ -117,5 +132,8 @@ Multi-agent collaboration:
 - Use tags to categorize tasks for better routing and analytics.
 - For recurring work, create templates with \`mc.templates.create\`.
 - Check \`mc.intelligence.recommend\` to see which agent is best suited for a task.
+- If a task is outside your expertise, use \`mc.delegations.autoDelegate\` to hand it to a better-suited agent.
+- Use \`mc.delegations.suggestions\` to see which agents are best suited before delegating.
+- Delegations require operator approval by default — the operator reviews and approves/rejects.
 </mission-control>`;
 }

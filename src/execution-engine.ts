@@ -25,6 +25,12 @@ import {
 } from "./approval-engine.js";
 import type { Task, EngineStatus } from "./types.js";
 import { recordOutcome } from "./intelligence/capabilities.js";
+import {
+  notifyApprovalNeeded,
+  notifyTaskCompleted,
+  notifyTaskFailed,
+  checkDeadlines,
+} from "./notification-engine.js";
 
 type GatewayContext = GatewayRequestHandlerOptions["context"];
 type BroadcastFn = GatewayContext["broadcast"];
@@ -310,21 +316,30 @@ async function tick(): Promise<void> {
       broadcastApprovalEvent("expired", { id });
     }
 
-    // 2. Check blocked tasks -- promote if deps are now met
+    // 2. Check deadlines and create notifications
+    try {
+      const deadlineNotified = checkDeadlines();
+      if (deadlineNotified.length > 0) {
+        const broadcast = getBroadcast();
+        if (broadcast) broadcast("mc.notification", { type: "deadline", count: deadlineNotified.length });
+      }
+    } catch {}
+
+    // 3. Check blocked tasks -- promote if deps are now met
     const promoted = checkBlockedTasks();
     for (const taskId of promoted) {
       const task = getTask(taskId);
       if (task) broadcastTaskEvent("status_changed", task);
     }
 
-    // 3. Promote scheduled tasks that are past their scheduled_at
+    // 4. Promote scheduled tasks that are past their scheduled_at
     const scheduled = promoteScheduledTasks();
     for (const taskId of scheduled) {
       const task = getTask(taskId);
       if (task) broadcastTaskEvent("status_changed", task);
     }
 
-    // 4. Check for timed-out running tasks
+    // 5. Check for timed-out running tasks
     const runningRuns = getRunningTaskRuns();
     const now = Date.now();
     for (const run of runningRuns) {
@@ -343,7 +358,7 @@ async function tick(): Promise<void> {
       }
     }
 
-    // 5. Dispatch queued tasks if auto-execute is on
+    // 6. Dispatch queued tasks if auto-execute is on
     if (!engineConfig.autoExecute) return;
 
     const currentlyRunning = runningRuns.length;
@@ -364,6 +379,9 @@ async function tick(): Promise<void> {
         const waiting = transitionTask(task.id, "waiting_approval", "Awaiting approval");
         if (waiting) broadcastTaskEvent("status_changed", waiting);
         broadcastApprovalEvent("new", approval);
+        notifyApprovalNeeded(task.id, task.title, task.agentId);
+        const broadcast = getBroadcast();
+        if (broadcast) broadcast("mc.notification", { type: "new" });
         continue;
       }
 
@@ -415,11 +433,23 @@ export function handleAgentEnd(
     }
     // Record success for intelligence layer
     try { recordOutcome(task.agentId, task, true, runDurationMs); } catch {}
+    // Notify
+    try {
+      notifyTaskCompleted(task.id, task.title, task.agentId);
+      const broadcast = getBroadcast();
+      if (broadcast) broadcast("mc.notification", { type: "new" });
+    } catch {}
   } else {
     const errorMsg = event.error ?? "Agent execution failed";
     completeTaskRun(run.id, { status: "failed", error: errorMsg });
     // Record failure for intelligence layer
     try { recordOutcome(task.agentId, task, false, runDurationMs); } catch {}
+    // Notify
+    try {
+      notifyTaskFailed(task.id, task.title, task.agentId, event.error);
+      const broadcast = getBroadcast();
+      if (broadcast) broadcast("mc.notification", { type: "new" });
+    } catch {}
 
     // Retry if allowed
     if (task.retryCount < task.maxRetries) {

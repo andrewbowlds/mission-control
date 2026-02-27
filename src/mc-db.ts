@@ -402,6 +402,51 @@ function runMigrations(conn: DatabaseSync): void {
         CREATE INDEX IF NOT EXISTS idx_routing_rules_agent ON routing_rules(preferred_agent_id);
       `,
     },
+    {
+      id: "20260227_06_notifications_and_delegation",
+      sql: `
+        CREATE TABLE IF NOT EXISTS notifications (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          body TEXT,
+          severity TEXT NOT NULL DEFAULT 'info',
+          source_type TEXT,
+          source_id TEXT,
+          actor_id TEXT,
+          read INTEGER NOT NULL DEFAULT 0,
+          dismissed INTEGER NOT NULL DEFAULT 0,
+          action_type TEXT,
+          action_payload_json TEXT,
+          created_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS delegations (
+          id TEXT PRIMARY KEY,
+          task_id TEXT NOT NULL,
+          from_agent_id TEXT NOT NULL,
+          to_agent_id TEXT NOT NULL,
+          reason TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          requires_approval INTEGER NOT NULL DEFAULT 0,
+          approval_id TEXT,
+          original_agent_id TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          resolved_at INTEGER,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+          FOREIGN KEY (approval_id) REFERENCES approval_requests(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
+        CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(type);
+        CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
+        CREATE INDEX IF NOT EXISTS idx_notifications_source ON notifications(source_type, source_id);
+        CREATE INDEX IF NOT EXISTS idx_delegations_task ON delegations(task_id);
+        CREATE INDEX IF NOT EXISTS idx_delegations_from ON delegations(from_agent_id);
+        CREATE INDEX IF NOT EXISTS idx_delegations_to ON delegations(to_agent_id);
+        CREATE INDEX IF NOT EXISTS idx_delegations_status ON delegations(status);
+      `,
+    },
   ];
 
   const hasMigration = conn.prepare("SELECT 1 FROM schema_migrations WHERE id = ?");

@@ -429,6 +429,48 @@ export type GitHubIssue = {
   syncedAt: number;
 };
 
+// ── Notification Types ───────────────────────────────────────────────────
+
+export type NotificationType =
+  | "approval_needed" | "task_completed" | "task_failed"
+  | "task_delegated" | "delegation_request" | "delegation_approved"
+  | "delegation_rejected" | "deadline_approaching"
+  | "workflow_completed" | "workflow_failed" | "system";
+
+export type MCNotification = {
+  id: string;
+  type: NotificationType;
+  title: string;
+  body?: string;
+  severity: "info" | "warning" | "error" | "success";
+  sourceType?: string;
+  sourceId?: string;
+  actorId?: string;
+  read: boolean;
+  dismissed: boolean;
+  actionType?: string;
+  actionPayloadJson?: string;
+  createdAt: number;
+};
+
+// ── Delegation Types ─────────────────────────────────────────────────────
+
+export type DelegationStatus = "pending" | "approved" | "rejected" | "completed" | "cancelled";
+
+export type MCDelegation = {
+  id: string;
+  taskId: string;
+  fromAgentId: string;
+  toAgentId: string;
+  reason?: string;
+  status: DelegationStatus;
+  requiresApproval: boolean;
+  approvalId?: string;
+  originalAgentId: string;
+  createdAt: number;
+  resolvedAt?: number;
+};
+
 type Tab = "dashboard" | "tasks" | "approvals" | "chat" | "people" | "memory" | "calendar" | "team" | "trello" | "workflows" | "automations" | "analytics" | "integrations";
 
 const MC_GATEWAY_TOKEN_KEY = "mc.gateway.token.v1";
@@ -557,6 +599,24 @@ export type AppFacade = {
   deleteRoutingRule(id: string): Promise<void>;
   getRecommendations(taskId: string): Promise<AgentRecommendation[]>;
   resetAgentCapabilities(agentId: string): Promise<void>;
+  // Notifications
+  notifications: MCNotification[];
+  unreadCount: number;
+  notificationsOpen: boolean;
+  loadNotifications(): Promise<void>;
+  markNotificationRead(id: string): Promise<void>;
+  markAllNotificationsRead(): Promise<void>;
+  dismissNotification(id: string): Promise<void>;
+  dismissAllNotifications(): Promise<void>;
+  toggleNotifications(): void;
+  // Delegations
+  delegations: MCDelegation[];
+  loadDelegations(): Promise<void>;
+  requestDelegation(data: { taskId: string; fromAgentId: string; toAgentId: string; reason?: string; requiresApproval?: boolean }): Promise<MCDelegation | undefined>;
+  resolveDelegation(id: string, approved: boolean, note?: string): Promise<MCDelegation | undefined>;
+  cancelDelegation(id: string): Promise<void>;
+  getDelegationSuggestions(taskId: string): Promise<AgentRecommendation[]>;
+  autoDelegateTask(taskId: string, fromAgentId: string, reason?: string): Promise<MCDelegation | undefined>;
   reload(): Promise<void>;
 };
 
@@ -657,6 +717,58 @@ export class McApp extends LitElement {
     .dot.connected  { background: #22c55e; }
     .dot.disconnected { background: #ef4444; }
     .content { height: calc(100vh - 48px); overflow: hidden; }
+    .bell-wrap { position: relative; margin-left: auto; margin-right: 8px; }
+    .bell-btn {
+      background: none; border: none; color: #94a3b8; font-size: 18px;
+      cursor: pointer; padding: 4px 8px; position: relative;
+    }
+    .bell-btn:hover { color: #e2e8f0; }
+    .bell-badge {
+      position: absolute; top: 0; right: 0;
+      background: #ef4444; color: #fff; font-size: 9px; font-weight: 700;
+      min-width: 16px; height: 16px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center; padding: 0 3px;
+    }
+    .notif-panel {
+      position: absolute; top: 40px; right: 0; z-index: 999;
+      width: 380px; max-height: 480px; overflow-y: auto;
+      background: #12121a; border: 1px solid #1e1e2e; border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+    .notif-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 14px; border-bottom: 1px solid #1e1e2e;
+    }
+    .notif-header span { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+    .notif-actions { display: flex; gap: 8px; }
+    .notif-actions button {
+      background: none; border: none; color: #a78bfa; font-size: 11px;
+      cursor: pointer; padding: 2px 4px;
+    }
+    .notif-actions button:hover { text-decoration: underline; }
+    .notif-item {
+      padding: 10px 14px; border-bottom: 1px solid #1a1a2e; cursor: pointer;
+      transition: background 0.1s;
+    }
+    .notif-item:hover { background: #1a1a2e; }
+    .notif-item.unread { border-left: 3px solid #a78bfa; }
+    .notif-item .n-title { font-size: 12px; font-weight: 600; color: #e2e8f0; margin-bottom: 2px; }
+    .notif-item .n-body { font-size: 11px; color: #94a3b8; line-height: 1.3; }
+    .notif-item .n-time { font-size: 10px; color: #64748b; margin-top: 4px; }
+    .notif-item .n-severity {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      margin-right: 6px; vertical-align: middle;
+    }
+    .n-severity.info { background: #3b82f6; }
+    .n-severity.warning { background: #f59e0b; }
+    .n-severity.error { background: #ef4444; }
+    .n-severity.success { background: #22c55e; }
+    .notif-empty { padding: 24px; text-align: center; color: #64748b; font-size: 12px; }
+    .notif-dismiss {
+      background: none; border: none; color: #64748b; font-size: 14px;
+      cursor: pointer; padding: 2px 4px; float: right;
+    }
+    .notif-dismiss:hover { color: #ef4444; }
   `;
 
   @state() private tab: Tab = "dashboard";
@@ -691,6 +803,10 @@ export class McApp extends LitElement {
   @state() private githubIssues: GitHubIssue[] = [];
   @state() private agentCapabilities: AgentCapability[] = [];
   @state() private routingRules: RoutingRule[] = [];
+  @state() private notifications: MCNotification[] = [];
+  @state() private unreadCount = 0;
+  @state() private notificationsOpen = false;
+  @state() private delegations: MCDelegation[] = [];
 
   private gw!: MCGatewayClient;
 
@@ -797,6 +913,14 @@ export class McApp extends LitElement {
       void this.loadAgentCapabilities();
       void this.loadRoutingRules();
     }
+    if (evt.event === "mc.notification") {
+      void this.loadNotifications();
+      void this.loadUnreadCount();
+    }
+    if (evt.event === "mc.delegation") {
+      void this.loadDelegations();
+      void this.loadTasks();
+    }
   }
 
   private async loadAll(): Promise<void> {
@@ -822,6 +946,9 @@ export class McApp extends LitElement {
       this.loadGitHubIssues(),
       this.loadAgentCapabilities(),
       this.loadRoutingRules(),
+      this.loadNotifications(),
+      this.loadUnreadCount(),
+      this.loadDelegations(),
     ]);
   }
 
@@ -933,6 +1060,80 @@ export class McApp extends LitElement {
   async loadRoutingRules(): Promise<void> {
     const res = await this.gw.request<{ rules: RoutingRule[] }>("mc.intelligence.routing.list", {}).catch(() => null);
     this.routingRules = res?.rules ?? [];
+  }
+
+  async loadNotifications(): Promise<void> {
+    const res = await this.gw.request<{ notifications: MCNotification[] }>("mc.notifications.list", { limit: 50 }).catch(() => null);
+    this.notifications = res?.notifications ?? [];
+  }
+
+  async loadUnreadCount(): Promise<void> {
+    const res = await this.gw.request<{ count: number }>("mc.notifications.unreadCount", {}).catch(() => null);
+    this.unreadCount = res?.count ?? 0;
+  }
+
+  async markNotificationRead(id: string): Promise<void> {
+    await this.gw.request("mc.notifications.markRead", { id }).catch(() => null);
+    this.notifications = this.notifications.map((n) => (n.id === id ? { ...n, read: true } : n));
+    this.unreadCount = Math.max(0, this.unreadCount - 1);
+  }
+
+  async markAllNotificationsRead(): Promise<void> {
+    await this.gw.request("mc.notifications.markAllRead", {}).catch(() => null);
+    this.notifications = this.notifications.map((n) => ({ ...n, read: true }));
+    this.unreadCount = 0;
+  }
+
+  async dismissNotificationById(id: string): Promise<void> {
+    await this.gw.request("mc.notifications.dismiss", { id }).catch(() => null);
+    this.notifications = this.notifications.filter((n) => n.id !== id);
+  }
+
+  async dismissAllNotifications(): Promise<void> {
+    await this.gw.request("mc.notifications.dismissAll", {}).catch(() => null);
+    this.notifications = [];
+    this.unreadCount = 0;
+  }
+
+  private toggleNotifications(): void {
+    this.notificationsOpen = !this.notificationsOpen;
+    if (this.notificationsOpen) void this.loadNotifications();
+  }
+
+  async loadDelegations(): Promise<void> {
+    const res = await this.gw.request<{ delegations: MCDelegation[] }>("mc.delegations.list", { limit: 50 }).catch(() => null);
+    this.delegations = res?.delegations ?? [];
+  }
+
+  async requestDelegation(data: { taskId: string; fromAgentId: string; toAgentId: string; reason?: string; requiresApproval?: boolean }): Promise<MCDelegation | undefined> {
+    const res = await this.gw.request<{ delegation: MCDelegation }>("mc.delegations.request", data).catch(() => null);
+    if (res?.delegation) void this.loadDelegations();
+    return res?.delegation;
+  }
+
+  async resolveDelegation(id: string, approved: boolean, note?: string): Promise<MCDelegation | undefined> {
+    const res = await this.gw.request<{ delegation: MCDelegation }>("mc.delegations.resolve", { id, approved, note }).catch(() => null);
+    if (res?.delegation) {
+      void this.loadDelegations();
+      void this.loadTasks();
+    }
+    return res?.delegation;
+  }
+
+  async cancelDelegation(id: string): Promise<void> {
+    await this.gw.request("mc.delegations.cancel", { id }).catch(() => null);
+    void this.loadDelegations();
+  }
+
+  async getDelegationSuggestions(taskId: string): Promise<AgentRecommendation[]> {
+    const res = await this.gw.request<{ suggestions: AgentRecommendation[] }>("mc.delegations.suggestions", { taskId }).catch(() => null);
+    return res?.suggestions ?? [];
+  }
+
+  async autoDelegateTask(taskId: string, fromAgentId: string, reason?: string): Promise<MCDelegation | undefined> {
+    const res = await this.gw.request<{ delegation: MCDelegation }>("mc.delegations.autoDelegate", { taskId, fromAgentId, reason }).catch(() => null);
+    if (res?.delegation) void this.loadDelegations();
+    return res?.delegation;
   }
 
   async createRoutingRule(data: { name: string; ruleType: RoutingRuleType; matchConfigJson: string; preferredAgentId: string; confidence?: number; override?: boolean }): Promise<RoutingRule | undefined> {
@@ -1523,8 +1724,61 @@ export class McApp extends LitElement {
       deleteRoutingRule: (id) => this.deleteRoutingRule(id),
       getRecommendations: (tid) => this.getRecommendations(tid),
       resetAgentCapabilities: (aid) => this.resetAgentCapabilities(aid),
+      // Notifications
+      notifications: this.notifications,
+      unreadCount: this.unreadCount,
+      notificationsOpen: this.notificationsOpen,
+      loadNotifications: () => this.loadNotifications(),
+      markNotificationRead: (id) => this.markNotificationRead(id),
+      markAllNotificationsRead: () => this.markAllNotificationsRead(),
+      dismissNotification: (id) => this.dismissNotificationById(id),
+      dismissAllNotifications: () => this.dismissAllNotifications(),
+      toggleNotifications: () => this.toggleNotifications(),
+      // Delegations
+      delegations: this.delegations,
+      loadDelegations: () => this.loadDelegations(),
+      requestDelegation: (d) => this.requestDelegation(d),
+      resolveDelegation: (id, a, n) => this.resolveDelegation(id, a, n),
+      cancelDelegation: (id) => this.cancelDelegation(id),
+      getDelegationSuggestions: (tid) => this.getDelegationSuggestions(tid),
+      autoDelegateTask: (tid, aid, r) => this.autoDelegateTask(tid, aid, r),
       reload: () => this.loadAll(),
     };
+  }
+
+  private formatTimeAgo(ts: number): string {
+    const diff = Date.now() - ts;
+    if (diff < 60000) return "just now";
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return `${Math.floor(diff / 86400000)}d ago`;
+  }
+
+  private renderNotificationPanel() {
+    return html`
+      <div class="notif-panel">
+        <div class="notif-header">
+          <span>Notifications</span>
+          <div class="notif-actions">
+            <button @click=${() => void this.markAllNotificationsRead()}>Mark all read</button>
+            <button @click=${() => void this.dismissAllNotifications()}>Clear all</button>
+          </div>
+        </div>
+        ${this.notifications.length === 0
+          ? html`<div class="notif-empty">No notifications</div>`
+          : this.notifications.map((n) => html`
+            <div class="notif-item ${n.read ? "" : "unread"}" @click=${() => void this.markNotificationRead(n.id)}>
+              <button class="notif-dismiss" @click=${(e: Event) => { e.stopPropagation(); void this.dismissNotificationById(n.id); }}>x</button>
+              <div class="n-title">
+                <span class="n-severity ${n.severity}"></span>
+                ${n.title}
+              </div>
+              ${n.body ? html`<div class="n-body">${n.body}</div>` : ""}
+              <div class="n-time">${this.formatTimeAgo(n.createdAt)}</div>
+            </div>
+          `)}
+      </div>
+    `;
   }
 
   private get pendingApprovalCount(): number {
@@ -1593,7 +1847,14 @@ export class McApp extends LitElement {
           class="nav-tab ${this.tab === "trello" ? "active" : ""}"
           @click=${() => { this.tab = "trello"; }}
         >Trello</button>
-        <div class="status">
+        <div class="bell-wrap">
+          <button class="bell-btn" @click=${() => this.toggleNotifications()}>
+            &#128276;
+            ${this.unreadCount > 0 ? html`<span class="bell-badge">${this.unreadCount}</span>` : ""}
+          </button>
+          ${this.notificationsOpen ? this.renderNotificationPanel() : ""}
+        </div>
+        <div class="status" style="margin-left:0;">
           <button class="nav-tab" style="height:32px;padding:0 10px;" @click=${() => this.promptGatewayToken()}>
             Token
           </button>

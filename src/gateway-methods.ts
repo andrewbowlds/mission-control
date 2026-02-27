@@ -119,6 +119,24 @@ import {
   deleteRoutingRule,
   recommendAgents,
 } from "./intelligence/router.js";
+import {
+  listNotifications,
+  getNotification,
+  getUnreadCount,
+  markRead,
+  markAllRead,
+  dismissNotification,
+  dismissAll,
+} from "./notification-engine.js";
+import {
+  listDelegations,
+  getDelegation,
+  requestDelegation,
+  resolveDelegation,
+  cancelDelegation,
+  getDelegationSuggestions,
+  autoDelegateTask,
+} from "./delegation-engine.js";
 import type {
   CronJob,
   TaskPriority,
@@ -130,6 +148,8 @@ import type {
   WorkflowStepFailureAction,
   AutomationEventType,
   AutomationActionType,
+  NotificationType,
+  DelegationStatus,
 } from "./types.js";
 
 type RegisterGatewayMethod = OpenClawPluginApi["registerGatewayMethod"];
@@ -1467,5 +1487,164 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     const topN = typeof params.topN === "number" ? params.topN : 5;
     const recommendations = recommendAgents(task, { topN });
     respond(true, { recommendations });
+  });
+
+  // ── Notifications ─────────────────────────────────────────────────────────
+
+  api.registerGatewayMethod("mc.notifications.list", ({ params, respond, context }) => {
+    captureGatewayContext(context);
+    const filter: Parameters<typeof listNotifications>[0] = {};
+    if (typeof params.read === "boolean") filter.read = params.read;
+    if (params.dismissed !== undefined) filter.dismissed = Boolean(params.dismissed);
+    else filter.dismissed = false; // default: hide dismissed
+    if (typeof params.type === "string") filter.type = params.type as NotificationType;
+    if (Array.isArray(params.type)) filter.type = params.type as NotificationType[];
+    if (typeof params.limit === "number") filter.limit = params.limit;
+    if (typeof params.offset === "number") filter.offset = params.offset;
+    respond(true, { notifications: listNotifications(filter) });
+  });
+
+  api.registerGatewayMethod("mc.notifications.unreadCount", ({ respond, context }) => {
+    captureGatewayContext(context);
+    respond(true, { count: getUnreadCount() });
+  });
+
+  api.registerGatewayMethod("mc.notifications.get", ({ params, respond, context }) => {
+    captureGatewayContext(context);
+    const id = typeof params.id === "string" ? params.id.trim() : "";
+    if (!id) return badRequest(respond, "id is required");
+    const notification = getNotification(id);
+    if (!notification) return notFound(respond, "notification not found");
+    respond(true, { notification });
+  });
+
+  api.registerGatewayMethod("mc.notifications.markRead", ({ params, respond, context }) => {
+    captureGatewayContext(context);
+    const id = typeof params.id === "string" ? params.id.trim() : "";
+    if (!id) return badRequest(respond, "id is required");
+    const notification = markRead(id);
+    if (!notification) return notFound(respond, "notification not found");
+    context.broadcast("mc.notification", { type: "read", id });
+    respond(true, { notification });
+  });
+
+  api.registerGatewayMethod("mc.notifications.markAllRead", ({ respond, context }) => {
+    captureGatewayContext(context);
+    const count = markAllRead();
+    context.broadcast("mc.notification", { type: "all_read" });
+    respond(true, { count });
+  });
+
+  api.registerGatewayMethod("mc.notifications.dismiss", ({ params, respond, context }) => {
+    captureGatewayContext(context);
+    const id = typeof params.id === "string" ? params.id.trim() : "";
+    if (!id) return badRequest(respond, "id is required");
+    const ok = dismissNotification(id);
+    if (ok) context.broadcast("mc.notification", { type: "dismissed", id });
+    respond(true, { ok });
+  });
+
+  api.registerGatewayMethod("mc.notifications.dismissAll", ({ respond, context }) => {
+    captureGatewayContext(context);
+    const count = dismissAll();
+    context.broadcast("mc.notification", { type: "all_dismissed" });
+    respond(true, { count });
+  });
+
+  // ── Delegations ───────────────────────────────────────────────────────────
+
+  api.registerGatewayMethod("mc.delegations.list", ({ params, respond, context }) => {
+    captureGatewayContext(context);
+    const filter: Parameters<typeof listDelegations>[0] = {};
+    if (typeof params.taskId === "string") filter.taskId = params.taskId;
+    if (typeof params.fromAgentId === "string") filter.fromAgentId = params.fromAgentId;
+    if (typeof params.toAgentId === "string") filter.toAgentId = params.toAgentId;
+    if (typeof params.status === "string") filter.status = params.status as DelegationStatus;
+    if (Array.isArray(params.status)) filter.status = params.status as DelegationStatus[];
+    if (typeof params.limit === "number") filter.limit = params.limit;
+    if (typeof params.offset === "number") filter.offset = params.offset;
+    respond(true, { delegations: listDelegations(filter) });
+  });
+
+  api.registerGatewayMethod("mc.delegations.get", ({ params, respond, context }) => {
+    captureGatewayContext(context);
+    const id = typeof params.id === "string" ? params.id.trim() : "";
+    if (!id) return badRequest(respond, "id is required");
+    const delegation = getDelegation(id);
+    if (!delegation) return notFound(respond, "delegation not found");
+    respond(true, { delegation });
+  });
+
+  api.registerGatewayMethod("mc.delegations.request", ({ params, respond, context }) => {
+    captureGatewayContext(context);
+    const taskId = typeof params.taskId === "string" ? params.taskId.trim() : "";
+    const fromAgentId = typeof params.fromAgentId === "string" ? params.fromAgentId.trim() : "";
+    const toAgentId = typeof params.toAgentId === "string" ? params.toAgentId.trim() : "";
+    if (!taskId) return badRequest(respond, "taskId is required");
+    if (!fromAgentId) return badRequest(respond, "fromAgentId is required");
+    if (!toAgentId) return badRequest(respond, "toAgentId is required");
+    const delegation = requestDelegation({
+      taskId,
+      fromAgentId,
+      toAgentId,
+      reason: typeof params.reason === "string" ? params.reason : undefined,
+      requiresApproval: typeof params.requiresApproval === "boolean" ? params.requiresApproval : true,
+    });
+    if (!delegation) return notFound(respond, "task not found");
+    context.broadcast("mc.delegation", { type: "requested", delegation });
+    context.broadcast("mc.notification", { type: "new" });
+    respond(true, { delegation });
+  });
+
+  api.registerGatewayMethod("mc.delegations.resolve", ({ params, respond, context }) => {
+    captureGatewayContext(context);
+    const id = typeof params.id === "string" ? params.id.trim() : "";
+    if (!id) return badRequest(respond, "id is required");
+    const approved = params.approved === true;
+    const delegation = resolveDelegation(id, approved, {
+      decidedBy: typeof params.decidedBy === "string" ? params.decidedBy : "operator",
+      note: typeof params.note === "string" ? params.note : undefined,
+    });
+    if (!delegation) return notFound(respond, "delegation not found or not pending");
+    context.broadcast("mc.delegation", { type: "resolved", delegation });
+    context.broadcast("mc.notification", { type: "new" });
+    // If delegation completed, refresh tasks since agent changed
+    if (delegation.status === "completed") {
+      context.broadcast("mc.task", { type: "updated" });
+    }
+    respond(true, { delegation });
+  });
+
+  api.registerGatewayMethod("mc.delegations.cancel", ({ params, respond, context }) => {
+    captureGatewayContext(context);
+    const id = typeof params.id === "string" ? params.id.trim() : "";
+    if (!id) return badRequest(respond, "id is required");
+    const delegation = cancelDelegation(id);
+    if (!delegation) return notFound(respond, "delegation not found or not pending");
+    context.broadcast("mc.delegation", { type: "cancelled", delegation });
+    respond(true, { delegation });
+  });
+
+  api.registerGatewayMethod("mc.delegations.suggestions", ({ params, respond, context }) => {
+    captureGatewayContext(context);
+    const taskId = typeof params.taskId === "string" ? params.taskId.trim() : "";
+    if (!taskId) return badRequest(respond, "taskId is required");
+    const topN = typeof params.topN === "number" ? params.topN : 5;
+    const suggestions = getDelegationSuggestions(taskId, { topN });
+    respond(true, { suggestions });
+  });
+
+  api.registerGatewayMethod("mc.delegations.autoDelegate", ({ params, respond, context }) => {
+    captureGatewayContext(context);
+    const taskId = typeof params.taskId === "string" ? params.taskId.trim() : "";
+    const fromAgentId = typeof params.fromAgentId === "string" ? params.fromAgentId.trim() : "";
+    if (!taskId) return badRequest(respond, "taskId is required");
+    if (!fromAgentId) return badRequest(respond, "fromAgentId is required");
+    const reason = typeof params.reason === "string" ? params.reason : undefined;
+    const delegation = autoDelegateTask(taskId, fromAgentId, reason);
+    if (!delegation) return respond(true, { delegation: null, message: "No suitable agent found for delegation" });
+    context.broadcast("mc.delegation", { type: "requested", delegation });
+    context.broadcast("mc.notification", { type: "new" });
+    respond(true, { delegation });
   });
 }

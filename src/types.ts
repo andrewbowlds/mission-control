@@ -391,6 +391,57 @@ export type AgentRecommendation = {
   reason: string;
 };
 
+// ── Notifications ────────────────────────────────────────────────────────
+
+export type NotificationType =
+  | "approval_needed"
+  | "task_completed"
+  | "task_failed"
+  | "task_delegated"
+  | "delegation_request"
+  | "delegation_approved"
+  | "delegation_rejected"
+  | "deadline_approaching"
+  | "workflow_completed"
+  | "workflow_failed"
+  | "system";
+
+export type NotificationSeverity = "info" | "warning" | "error" | "success";
+
+export type Notification = {
+  id: string;
+  type: NotificationType;
+  title: string;
+  body?: string;
+  severity: NotificationSeverity;
+  sourceType?: string;
+  sourceId?: string;
+  actorId?: string;
+  read: boolean;
+  dismissed: boolean;
+  actionType?: string;
+  actionPayloadJson?: string;
+  createdAt: number;
+};
+
+// ── Agent Delegation ─────────────────────────────────────────────────────
+
+export type DelegationStatus = "pending" | "approved" | "rejected" | "completed" | "cancelled";
+
+export type Delegation = {
+  id: string;
+  taskId: string;
+  fromAgentId: string;
+  toAgentId: string;
+  reason?: string;
+  status: DelegationStatus;
+  requiresApproval: boolean;
+  approvalId?: string;
+  originalAgentId: string;
+  createdAt: number;
+  resolvedAt?: number;
+};
+
 // ── Engine Status ─────────────────────────────────────────────────────────
 
 export type EngineStatus = {
