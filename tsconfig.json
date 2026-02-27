@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "lib": ["ES2022"],
+    "paths": {
+      "openclaw/plugin-sdk": ["/home/ajbowlds/openclaw/src/plugin-sdk/index.ts"],
+      "openclaw/plugin-sdk/*": ["/home/ajbowlds/openclaw/src/plugin-sdk/*.ts"]
+    }
+  },
+  "include": ["index.ts", "src/**/*.ts"],
+  "exclude": ["ui", "node_modules", "dist"]
+}
