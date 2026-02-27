@@ -1259,8 +1259,12 @@ export class McApp extends LitElement {
   }
 
   async getSessionHistory(sessionKey: string, limit = 100): Promise<any[]> {
-    const res = await this.gw.request<{ messages?: any[] }>("sessions.history", { sessionKey, limit }).catch(() => null);
-    return res?.messages ?? [];
+    const res = await this.gw.request<{ previews?: { key: string; status: string; items: { role: string; text: string }[] }[] }>(
+      "sessions.preview", { keys: [sessionKey], limit, maxChars: 4000 },
+    ).catch(() => null);
+    const preview = res?.previews?.[0];
+    if (!preview || preview.status !== "ok") return [];
+    return preview.items;
   }
 
   async sendToSession(sessionKey: string, message: string): Promise<void> {

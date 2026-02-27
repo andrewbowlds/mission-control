@@ -46,6 +46,9 @@ export class McChat extends LitElement {
   }
 
   private extractText(msg: any): string {
+    // sessions.preview format: { role, text }
+    if (typeof msg?.text === "string") return msg.text;
+    // Legacy content array format
     const c = msg?.content;
     if (!Array.isArray(c)) return "";
     const parts: string[] = [];
