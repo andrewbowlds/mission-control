@@ -12,6 +12,7 @@ import { getTask } from "./src/task-engine.js";
 import { findRunForTask, advanceWorkflowRun } from "./src/workflow-engine.js";
 import { evaluateEvent } from "./src/automation-engine.js";
 import { buildMissionControlContext } from "./src/agent-context.js";
+import { seedIfEmpty } from "./src/seed-data.js";
 
 const plugin = {
   id: "mission-control",
@@ -35,6 +36,9 @@ const plugin = {
 
     // Register all mc.* gateway RPC methods
     registerMcMethods(api);
+
+    // Seed default templates, automation rules, and workflows (skips if already seeded)
+    seedIfEmpty();
 
     // Register execution engine as a background service
     api.registerService({

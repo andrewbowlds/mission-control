@@ -342,17 +342,24 @@ async function tick(): Promise<void> {
     // 5. Check for timed-out running tasks
     const runningRuns = getRunningTaskRuns();
     const now = Date.now();
+    const STALE_RUN_MS = 60 * 60 * 1000; // 1 hour default stale threshold
     for (const run of runningRuns) {
       const task = getTask(run.taskId);
       if (!task) continue;
-      if (task.timeoutMs && (now - run.startedAt) > task.timeoutMs) {
-        completeTaskRun(run.id, { status: "timeout", error: "Task execution timed out" });
+
+      const elapsed = now - run.startedAt;
+      const isTimedOut = task.timeoutMs && elapsed > task.timeoutMs;
+      const isStale = !task.timeoutMs && elapsed > STALE_RUN_MS;
+
+      if (isTimedOut || isStale) {
+        const reason = isTimedOut ? "Task execution timed out" : `Stale run (${Math.round(elapsed / 60000)}min without completion)`;
+        completeTaskRun(run.id, { status: "timeout", error: reason });
         // Retry if allowed
         if (task.retryCount < task.maxRetries) {
-          const retried = transitionTask(task.id, "queued", "Retrying after timeout");
+          const retried = transitionTask(task.id, "queued", `Retrying: ${reason}`);
           if (retried) broadcastTaskEvent("status_changed", retried);
         } else {
-          const failed = transitionTask(task.id, "failed", "Timed out after max retries");
+          const failed = transitionTask(task.id, "failed", `${reason} after max retries`);
           if (failed) broadcastTaskEvent("status_changed", failed);
         }
       }
