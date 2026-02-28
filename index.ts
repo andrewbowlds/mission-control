@@ -13,6 +13,7 @@ import { findRunForTask, advanceWorkflowRun } from "./src/workflow-engine.js";
 import { evaluateEvent } from "./src/automation-engine.js";
 import { buildMissionControlContext } from "./src/agent-context.js";
 import { seedIfEmpty } from "./src/seed-data.js";
+import { bootstrapGoogleContactsIntegration } from "./src/integrations/google-contacts.js";
 
 const plugin = {
   id: "mission-control",
@@ -40,6 +41,9 @@ const plugin = {
     // Seed default templates, automation rules, and workflows (skips if already seeded)
     seedIfEmpty();
 
+    // Auto-create Google Contacts integration record if tokens already exist
+    bootstrapGoogleContactsIntegration();
+
     // Register execution engine as a background service
     api.registerService({
       id: "mc-execution-engine",
@@ -55,11 +59,15 @@ const plugin = {
 
     // Hook: detect agent completion for MC tasks
     api.on("agent_end", (event: any, ctx: any) => {
-      const sessionKey = ctx?.sessionKey;
-      if (!sessionKey || typeof sessionKey !== "string") return;
+      const rawSessionKey = ctx?.sessionKey;
+      if (!rawSessionKey || typeof rawSessionKey !== "string") return;
 
-      // Only handle MC task sessions (format: {agentId}:mc-task-{taskId})
-      if (!sessionKey.includes(":mc-task-")) return;
+      // Only handle MC task sessions (format: {prefix}:{agentId}:mc-task-{taskId})
+      if (!rawSessionKey.includes(":mc-task-")) return;
+
+      // Gateway prefixes session keys with "agent:main:" — strip it to match
+      // the stored key format ({agentId}:mc-task-{taskId})
+      const sessionKey = rawSessionKey.replace(/^agent:main:/, "");
 
       handleAgentEnd(sessionKey, {
         success: event?.success ?? true,

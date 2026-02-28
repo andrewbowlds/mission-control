@@ -137,6 +137,27 @@ export type Person = {
   updatedAt: number;
 };
 
+export type CommunicationChannel = "call" | "text" | "email";
+export type CommunicationDirection = "inbound" | "outbound";
+
+export type CommunicationActivity = {
+  id: string;
+  personId: string;
+  channel: CommunicationChannel;
+  direction: CommunicationDirection;
+  timestamp: number;
+  status?: string;
+  summary?: string;
+  taskId?: string;
+  sessionId?: string;
+  messageId?: string;
+  providerId?: string;
+  providerName?: string;
+  metadataJson?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
 // ── Trello Boards ────────────────────────────────────────────────────────
 
 export type TrelloBoard = {
@@ -291,7 +312,7 @@ export type AutomationRule = {
 
 // ── Integrations ──────────────────────────────────────────────────────────
 
-export type IntegrationType = "google_calendar" | "github";
+export type IntegrationType = "google_calendar" | "github" | "google_contacts";
 export type IntegrationStatus = "connected" | "disconnected" | "error";
 
 export type Integration = {

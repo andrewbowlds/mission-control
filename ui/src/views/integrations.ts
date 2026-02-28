@@ -61,6 +61,7 @@ export class McIntegrations extends LitElement {
       flex-shrink: 0;
     }
     .card-icon.gcal { background: #1a2744; }
+    .card-icon.gcontacts { background: #1a3a2e; }
     .card-icon.github { background: #1a1a2e; }
     .card-title { font-weight: 600; font-size: 14px; }
     .card-sub { font-size: 11px; color: #64748b; margin-top: 2px; }
@@ -210,6 +211,10 @@ export class McIntegrations extends LitElement {
     return this.app.integrations.find((i) => i.type === "google_calendar");
   }
 
+  private gcontactsIntegration(): Integration | undefined {
+    return this.app.integrations.find((i) => i.type === "google_contacts");
+  }
+
   private githubIntegration(): Integration | undefined {
     return this.app.integrations.find((i) => i.type === "github");
   }
@@ -228,6 +233,17 @@ export class McIntegrations extends LitElement {
     this.syncing = { ...this.syncing, gcal: true };
     await this.app.gcalSync();
     this.syncing = { ...this.syncing, gcal: false };
+  }
+
+  private async handleGContactsConnect(): Promise<void> {
+    const url = await this.app.gcontactsConnect();
+    if (url) window.open(url, "_blank");
+  }
+
+  private async handleGContactsSync(): Promise<void> {
+    this.syncing = { ...this.syncing, gcontacts: true };
+    await this.app.gcontactsSync();
+    this.syncing = { ...this.syncing, gcontacts: false };
   }
 
   private async handleGitHubConnect(): Promise<void> {
@@ -251,6 +267,7 @@ export class McIntegrations extends LitElement {
 
   render() {
     const gcal = this.gcalIntegration();
+    const gc = this.gcontactsIntegration();
     const gh = this.githubIntegration();
 
     return html`
@@ -287,6 +304,40 @@ export class McIntegrations extends LitElement {
             ${gcal?.errorMessage ? html`<div class="card-meta" style="color: #f87171;">${gcal.errorMessage}</div>` : ""}
             <div class="card-actions">
               <button class="btn primary" @click=${() => void this.handleGCalConnect()}>Connect Google Calendar</button>
+            </div>
+          `}
+        </div>
+
+        <!-- Google Contacts -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon gcontacts">P</div>
+            <div>
+              <div class="card-title">Google Contacts</div>
+              <div class="card-sub">Sync contacts from Google</div>
+            </div>
+          </div>
+
+          <div class="status-badge ${gc?.status ?? "disconnected"}">
+            <div class="status-dot ${gc?.status ?? "disconnected"}"></div>
+            ${gc?.status === "connected" ? "Connected" : gc?.status === "error" ? "Error" : "Not Connected"}
+          </div>
+
+          ${gc?.status === "connected" ? html`
+            <div class="card-meta">
+              Last sync: ${this.fmtDate(gc.lastSyncAt)}<br>
+              Contacts: ${this.app.people.length}
+            </div>
+            <div class="card-actions">
+              <button class="btn" ?disabled=${this.syncing.gcontacts} @click=${() => void this.handleGContactsSync()}>
+                ${this.syncing.gcontacts ? "Syncing..." : "Sync Now"}
+              </button>
+              <button class="btn danger" @click=${() => void this.app.gcontactsDisconnect()}>Disconnect</button>
+            </div>
+          ` : html`
+            ${gc?.errorMessage ? html`<div class="card-meta" style="color: #f87171;">${gc.errorMessage}</div>` : ""}
+            <div class="card-actions">
+              <button class="btn primary" @click=${() => void this.handleGContactsConnect()}>Connect Google Contacts</button>
             </div>
           `}
         </div>

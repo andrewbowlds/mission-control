@@ -17,6 +17,7 @@ import {
   disconnectCalendar,
 } from "./integrations/google-calendar.js";
 import { verifyWebhookSignature, getWebhookSecret } from "./integrations/github.js";
+import { bootstrapGoogleContactsIntegration } from "./integrations/google-contacts.js";
 import { evaluateEvent } from "./automation-engine.js";
 
 const MC_PREFIX = "/mission-control";
@@ -86,6 +87,7 @@ function handleGoogleApi(req: IncomingMessage, res: ServerResponse, rawUrl: stri
 
     void handleGoogleOAuthCallback(code, state)
       .then(() => {
+        bootstrapGoogleContactsIntegration();
         res.writeHead(302, { Location: `${MC_PREFIX}?google_oauth=connected` });
         res.end();
       })

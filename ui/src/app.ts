@@ -366,7 +366,7 @@ export type AgentRecommendation = {
 
 // ── Phase 4: Integration Types ────────────────────────────────────────────
 
-export type IntegrationType = "google_calendar" | "github";
+export type IntegrationType = "google_calendar" | "github" | "google_contacts";
 export type IntegrationStatus = "connected" | "disconnected" | "error";
 
 export type Integration = {
@@ -585,6 +585,9 @@ export type AppFacade = {
   gcalCreateEvent(data: { title: string; startAt: number; endAt: number; allDay?: boolean; description?: string; location?: string }): Promise<CalendarEvent | undefined>;
   gcalDeleteEvent(id: string): Promise<void>;
   gcalLinkTask(eventId: string, taskId: string | null): Promise<CalendarEvent | undefined>;
+  gcontactsConnect(): Promise<string | undefined>;
+  gcontactsDisconnect(): Promise<void>;
+  gcontactsSync(): Promise<void>;
   githubConnect(data: { token: string; webhookSecret?: string }): Promise<void>;
   githubDisconnect(): Promise<void>;
   githubSync(): Promise<void>;
@@ -902,6 +905,10 @@ export class McApp extends LitElement {
     }
     if (evt.event === "mc.gcal") {
       void this.loadCalendarEvents();
+      void this.loadIntegrations();
+    }
+    if (evt.event === "mc.gcontacts") {
+      void this.loadPeople();
       void this.loadIntegrations();
     }
     if (evt.event === "mc.github") {
@@ -1588,6 +1595,22 @@ export class McApp extends LitElement {
     return res?.event;
   }
 
+  async gcontactsConnect(): Promise<string | undefined> {
+    const res = await this.gw.request<{ url: string }>("mc.gcontacts.connect", {}).catch(() => null);
+    return res?.url;
+  }
+
+  async gcontactsDisconnect(): Promise<void> {
+    await this.gw.request("mc.gcontacts.disconnect", {}).catch(() => null);
+    void this.loadIntegrations();
+  }
+
+  async gcontactsSync(): Promise<void> {
+    await this.gw.request("mc.gcontacts.sync", {}).catch(() => null);
+    void this.loadPeople();
+    void this.loadIntegrations();
+  }
+
   async githubConnect(data: { token: string; webhookSecret?: string }): Promise<void> {
     await this.gw.request("mc.github.connect", data).catch(() => null);
     void this.loadIntegrations();
@@ -1714,6 +1737,9 @@ export class McApp extends LitElement {
       gcalCreateEvent: (d) => this.gcalCreateEvent(d),
       gcalDeleteEvent: (id) => this.gcalDeleteEvent(id),
       gcalLinkTask: (eid, tid) => this.gcalLinkTask(eid, tid),
+      gcontactsConnect: () => this.gcontactsConnect(),
+      gcontactsDisconnect: () => this.gcontactsDisconnect(),
+      gcontactsSync: () => this.gcontactsSync(),
       githubConnect: (d) => this.githubConnect(d),
       githubDisconnect: () => this.githubDisconnect(),
       githubSync: () => this.githubSync(),

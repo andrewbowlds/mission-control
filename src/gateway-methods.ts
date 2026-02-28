@@ -42,6 +42,7 @@ import {
   validatePersonStatus,
 } from "./people-store.js";
 import { listMemoryFiles, readMemoryFile, searchMemory } from "./memory-store.js";
+import { createContactActivity, listContactActivities } from "./contact-activity-store.js";
 import {
   listTemplates,
   getTemplate,
@@ -98,6 +99,12 @@ import {
   linkEventToTask,
 } from "./integrations/google-calendar.js";
 import {
+  getContactsIntegrationStatus,
+  disconnectGoogleContactsIntegration,
+  syncGoogleContactsIntegration,
+} from "./integrations/google-contacts.js";
+import { createGoogleOAuthStartUrl } from "./google-contacts-auth.js";
+import {
   connectGitHub,
   disconnectGitHub,
   syncGitHubRepos,
@@ -150,6 +157,8 @@ import type {
   AutomationActionType,
   NotificationType,
   DelegationStatus,
+  CommunicationChannel,
+  CommunicationDirection,
 } from "./types.js";
 
 type RegisterGatewayMethod = OpenClawPluginApi["registerGatewayMethod"];
@@ -171,6 +180,8 @@ const validStatuses: TaskStatus[] = [
 const validPriorities: TaskPriority[] = ["critical", "high", "normal", "low"];
 const validTaskTypes: TaskType[] = ["manual", "automated", "scheduled", "triggered"];
 const validExecModes: ExecutionMode[] = ["agent", "workflow", "human"];
+const validCommunicationChannels: CommunicationChannel[] = ["call", "text", "email"];
+const validCommunicationDirections: CommunicationDirection[] = ["inbound", "outbound"];
 
 export function registerMcMethods(api: OpenClawPluginApi): void {
   // ── Tasks ──────────────────────────────────────────────────────────────────
@@ -290,14 +301,43 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     const note = typeof params.note === "string" ? params.note.trim() : "";
     if (!id) return badRequest(respond, "id is required");
     if (!note) return badRequest(respond, "note is required");
+    const author = typeof params.author === "string" ? params.author : "system";
     const update = addTaskUpdate(id, {
-      author: typeof params.author === "string" ? params.author : "system",
+      author,
       note,
       status: typeof params.status === "string" && validStatuses.includes(params.status as TaskStatus)
         ? (params.status as TaskStatus)
         : undefined,
       link: typeof params.link === "string" ? params.link : undefined,
     });
+
+    const outreach = params.outreach && typeof params.outreach === "object" ? params.outreach as Record<string, unknown> : null;
+    if (outreach) {
+      const personId = typeof outreach.personId === "string" ? outreach.personId.trim() : "";
+      const channel = typeof outreach.channel === "string" && validCommunicationChannels.includes(outreach.channel as CommunicationChannel)
+        ? outreach.channel as CommunicationChannel
+        : null;
+      const direction = typeof outreach.direction === "string" && validCommunicationDirections.includes(outreach.direction as CommunicationDirection)
+        ? outreach.direction as CommunicationDirection
+        : (author === "operator" ? "inbound" : "outbound");
+
+      if (personId && channel) {
+        createContactActivity({
+          personId,
+          channel,
+          direction,
+          timestamp: typeof outreach.timestamp === "number" ? outreach.timestamp : Date.now(),
+          status: typeof outreach.status === "string" ? outreach.status : undefined,
+          summary: typeof outreach.summary === "string" ? outreach.summary : note,
+          taskId: id,
+          sessionId: typeof outreach.sessionId === "string" ? outreach.sessionId : undefined,
+          messageId: typeof outreach.messageId === "string" ? outreach.messageId : undefined,
+          providerId: typeof outreach.providerId === "string" ? outreach.providerId : undefined,
+          providerName: typeof outreach.providerName === "string" ? outreach.providerName : undefined,
+          metadataJson: typeof outreach.metadataJson === "string" ? outreach.metadataJson : undefined,
+        });
+      }
+    }
     const task = getTask(id);
     if (task) context.broadcast("mc.task", { type: "updated", task });
     respond(true, { update });
@@ -508,6 +548,58 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     const person = updatePerson(id, patch);
     if (!person) return notFound(respond, "person not found");
     respond(true, { person });
+  });
+
+  api.registerGatewayMethod("mc.people.activities.list", ({ params, respond }) => {
+    const personId = typeof params.personId === "string" ? params.personId.trim() : "";
+    if (!personId) return badRequest(respond, "personId is required");
+    const channel = typeof params.channel === "string" && validCommunicationChannels.includes(params.channel as CommunicationChannel)
+      ? (params.channel as CommunicationChannel)
+      : undefined;
+    const direction = typeof params.direction === "string" && validCommunicationDirections.includes(params.direction as CommunicationDirection)
+      ? (params.direction as CommunicationDirection)
+      : undefined;
+
+    const activities = listContactActivities({
+      personId,
+      channel,
+      direction,
+      query: typeof params.query === "string" ? params.query : undefined,
+      limit: typeof params.limit === "number" ? params.limit : undefined,
+      before: typeof params.before === "number" ? params.before : undefined,
+      after: typeof params.after === "number" ? params.after : undefined,
+    });
+    respond(true, { activities });
+  });
+
+  api.registerGatewayMethod("mc.people.activities.create", ({ params, respond }) => {
+    const personId = typeof params.personId === "string" ? params.personId.trim() : "";
+    if (!personId) return badRequest(respond, "personId is required");
+    const channel = typeof params.channel === "string" && validCommunicationChannels.includes(params.channel as CommunicationChannel)
+      ? (params.channel as CommunicationChannel)
+      : null;
+    if (!channel) return badRequest(respond, "channel must be call|text|email");
+    const direction = typeof params.direction === "string" && validCommunicationDirections.includes(params.direction as CommunicationDirection)
+      ? (params.direction as CommunicationDirection)
+      : null;
+    if (!direction) return badRequest(respond, "direction must be inbound|outbound");
+
+    const activity = createContactActivity({
+      personId,
+      channel,
+      direction,
+      timestamp: typeof params.timestamp === "number" ? params.timestamp : undefined,
+      status: typeof params.status === "string" ? params.status : undefined,
+      summary: typeof params.summary === "string" ? params.summary : undefined,
+      taskId: typeof params.taskId === "string" ? params.taskId : undefined,
+      sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
+      messageId: typeof params.messageId === "string" ? params.messageId : undefined,
+      providerId: typeof params.providerId === "string" ? params.providerId : undefined,
+      providerName: typeof params.providerName === "string" ? params.providerName : undefined,
+      metadataJson: typeof params.metadataJson === "string" ? params.metadataJson : undefined,
+    });
+
+    respond(true, { activity });
   });
 
   api.registerGatewayMethod("mc.people.delete", ({ params, respond }) => {
@@ -1317,6 +1409,41 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     if (!event) return notFound(respond, "event not found");
     context.broadcast("mc.gcal", { type: "event_updated", event });
     respond(true, { event });
+  });
+
+  // ── Google Contacts ────────────────────────────────────────────────────────
+
+  api.registerGatewayMethod("mc.gcontacts.status", ({ respond, context }) => {
+    captureGatewayContext(context);
+    respond(true, getContactsIntegrationStatus());
+  });
+
+  api.registerGatewayMethod("mc.gcontacts.connect", ({ respond, context }) => {
+    captureGatewayContext(context);
+    try {
+      const { url } = createGoogleOAuthStartUrl();
+      respond(true, { url });
+    } catch (err) {
+      badRequest(respond, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  api.registerGatewayMethod("mc.gcontacts.disconnect", ({ respond, context }) => {
+    captureGatewayContext(context);
+    disconnectGoogleContactsIntegration();
+    context.broadcast("mc.gcontacts", { type: "disconnected" });
+    respond(true, { disconnected: true });
+  });
+
+  api.registerGatewayMethod("mc.gcontacts.sync", async ({ respond, context }) => {
+    captureGatewayContext(context);
+    try {
+      const result = await syncGoogleContactsIntegration();
+      context.broadcast("mc.gcontacts", { type: "synced", ...result });
+      respond(true, result);
+    } catch (err) {
+      badRequest(respond, err instanceof Error ? err.message : String(err));
+    }
   });
 
   // ── GitHub ──────────────────────────────────────────────────────────────────
