@@ -34,7 +34,7 @@ const GOOGLE_SCOPE = [
   "openid",
   "email",
   "profile",
-  "https://www.googleapis.com/auth/contacts.readonly",
+  "https://www.googleapis.com/auth/contacts",
 ].join(" ");
 
 function getStoreDir(): string {

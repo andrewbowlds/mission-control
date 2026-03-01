@@ -314,7 +314,7 @@ export class McIntegrations extends LitElement {
             <div class="card-icon gcontacts">P</div>
             <div>
               <div class="card-title">Google Contacts</div>
-              <div class="card-sub">Sync contacts from Google</div>
+              <div class="card-sub">Two-way contact sync with Google</div>
             </div>
           </div>
 

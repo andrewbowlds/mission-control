@@ -75,6 +75,9 @@ export class MCPeople extends LitElement {
   @state() activityDirection: ActivityDirection | "" = "";
   @state() activityError = "";
 
+  @state() textMessages: CommunicationActivity[] = [];
+  @state() textLoading = false;
+
   static styles = css`
     :host { display: block; height: 100%; overflow: auto; padding: 20px; box-sizing: border-box }
     .oauth-card, .detail-card, table { background: #111118; border: 1px solid #1e1e2e; border-radius: 10px; }
@@ -107,6 +110,18 @@ export class MCPeople extends LitElement {
     button.primary { background:#7c3aed; border-color:#8b5cf6; }
     button.danger { background:#7f1d1d; border-color:#991b1b; }
     .timeline-item { background:#0d0d14; border:1px solid #1e1e2e; border-radius:8px; padding:10px; }
+    .text-section { margin-top:18px; border-top:1px solid #1e1e2e; padding-top:14px; }
+    .text-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+    .chat-container { display:flex; flex-direction:column; gap:6px; max-height:400px; overflow-y:auto; padding:12px; background:#0a0a0f; border:1px solid #1e1e2e; border-radius:10px; }
+    .msg-row { display:flex; }
+    .msg-row.inbound { justify-content:flex-start; }
+    .msg-row.outbound { justify-content:flex-end; }
+    .msg-bubble { max-width:75%; padding:8px 12px; border-radius:12px; font-size:13px; line-height:1.4; word-break:break-word; }
+    .msg-bubble.inbound { background:#1e1e2e; color:#e2e8f0; border-bottom-left-radius:4px; }
+    .msg-bubble.outbound { background:#7c3aed; color:#fff; border-bottom-right-radius:4px; }
+    .msg-meta { font-size:10px; color:#64748b; margin-top:3px; }
+    .msg-row.outbound .msg-meta { text-align:right; }
+    .chat-empty { text-align:center; padding:32px; color:#475569; font-size:12px; }
   `;
 
   private get selectedPerson(): Person | undefined { return this.app.people.find((p) => p.id === this.selectedId); }
@@ -116,7 +131,7 @@ export class MCPeople extends LitElement {
     if (this.filterStatus) list = list.filter((p) => p.status === this.filterStatus);
     if (this.searchQuery.trim()) {
       const q = this.searchQuery.toLowerCase();
-      list = list.filter((p) => p.name.toLowerCase().includes(q) || (p.email?.toLowerCase().includes(q)) || (p.company?.toLowerCase().includes(q)) || (p.role?.toLowerCase().includes(q)) || p.tags.some((t) => t.toLowerCase().includes(q)));
+      list = list.filter((p) => p.name.toLowerCase().includes(q) || (p.email?.toLowerCase().includes(q)) || (p.company?.toLowerCase().includes(q)) || (p.role?.toLowerCase().includes(q)) || p.tags.some((t) => t.toLowerCase().includes(q)) || (p.phones?.some((ph) => ph.value.includes(q))));
     }
     return list;
   }
@@ -135,6 +150,7 @@ export class MCPeople extends LitElement {
     this.activityChannel = "";
     this.activityDirection = "";
     void this.loadActivities(person.id);
+    void this.loadTextMessages(person.id);
   }
 
   private backToList() { this.viewMode = "list"; this.selectedId = ""; this.editing = false; this.actionError = ""; }
@@ -145,6 +161,31 @@ export class MCPeople extends LitElement {
     const bg = STATUS_COLORS[status] + "22";
     const color = STATUS_COLORS[status];
     return html`<span class="status-badge" style="background:${bg};color:${color};border:1px solid ${color}44">${status}</span>`;
+  }
+
+  private async loadTextMessages(personId = this.selectedId) {
+    if (!personId) return;
+    this.textLoading = true;
+    try {
+      type SmsMsg = { direction: string; body: string; from: string; to: string; timestamp: string; messageSid?: string; variantName?: string };
+      const res = await this.app.gw.request<{ messages: SmsMsg[] }>("mc.people.smsHistory", {
+        personId,
+        limit: 500,
+      });
+      this.textMessages = (res?.messages ?? []).map((m) => ({
+        id: m.messageSid ?? "",
+        personId,
+        channel: "text" as ActivityChannel,
+        direction: (m.direction === "outbound" ? "outbound" : "inbound") as ActivityDirection,
+        timestamp: new Date(m.timestamp).getTime(),
+        summary: m.body,
+        providerName: m.variantName || "twilio",
+      }));
+    } catch {
+      this.textMessages = [];
+    } finally {
+      this.textLoading = false;
+    }
   }
 
   private async loadActivities(personId = this.selectedId) {
@@ -182,7 +223,7 @@ export class MCPeople extends LitElement {
         providerName: String(fd.get("providerName") || "").trim() || undefined,
       });
       (e.target as HTMLFormElement).reset();
-      await this.loadActivities();
+      await Promise.all([this.loadActivities(), this.loadTextMessages()]);
     } catch (err) {
       this.activityError = err instanceof Error ? err.message : String(err);
     }
@@ -244,6 +285,26 @@ export class MCPeople extends LitElement {
       </form></div>`;
   }
 
+  private renderTextMessages() {
+    return html`<div class="text-section">
+      <div class="text-header">
+        <div class="detail-label">Text Messages</div>
+        <button @click=${() => this.loadTextMessages()}>Refresh</button>
+      </div>
+      ${this.textLoading ? html`<div class="muted">Loading...</div>` :
+        this.textMessages.length === 0 ? html`<div class="chat-container"><div class="chat-empty">No text messages with this contact.</div></div>` :
+        html`<div class="chat-container" id="text-chat-scroll">
+          ${this.textMessages.map((m) => html`
+            <div class="msg-row ${m.direction}">
+              <div>
+                <div class="msg-bubble ${m.direction}">${m.summary || html`<span style="opacity:0.5">(no content)</span>`}</div>
+                <div class="msg-meta">${this.fmtDateTime(m.timestamp)}${m.status ? ` · ${m.status}` : ""}${m.providerName ? ` · ${m.providerName}` : ""}${m.sessionId ? ` · agent ${m.sessionId.slice(0, 8)}` : ""}</div>
+              </div>
+            </div>`)}
+        </div>`}
+    </div>`;
+  }
+
   private renderActivities() {
     return html`<div style="margin-top:18px; border-top:1px solid #1e1e2e; padding-top:14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
@@ -272,8 +333,18 @@ export class MCPeople extends LitElement {
     if (this.editing) return html`<button @click=${() => (this.editing = false)}>Back</button>${this.renderForm(person)}`;
     return html`<button @click=${() => this.backToList()}>Back to list</button><div class="detail-card">
       <div style="display:flex;align-items:center;gap:12px;"><h2>${person.name}</h2>${this.statusBadge(person.status)}</div>
-      <div class="detail-grid"><span class="detail-label">Email</span><span class="detail-value">${person.email || "-"}</span><span class="detail-label">Phone</span><span class="detail-value">${person.phone || "-"}</span><span class="detail-label">Company</span><span class="detail-value">${person.company || "-"}</span><span class="detail-label">Role</span><span class="detail-value">${person.role || "-"}</span><span class="detail-label">Last contacted</span><span class="detail-value">${this.fmtDate(person.lastContactedAt)}</span></div>
+      <div class="detail-grid">
+        <span class="detail-label">Email</span><span class="detail-value">${person.email || "-"}</span>
+        <span class="detail-label">Phone${(person.phones?.length ?? 0) > 1 ? "s" : ""}</span>
+        <span class="detail-value">${(person.phones && person.phones.length > 0)
+          ? person.phones.map((p, i) => html`${i > 0 ? html`<br/>` : nothing}${p.value} <span class="muted">(${p.type}${p.primary ? ", primary" : ""})</span>`)
+          : (person.phone || "-")}</span>
+        <span class="detail-label">Company</span><span class="detail-value">${person.company || "-"}</span>
+        <span class="detail-label">Role</span><span class="detail-value">${person.role || "-"}</span>
+        <span class="detail-label">Last contacted</span><span class="detail-value">${this.fmtDate(person.lastContactedAt)}</span>
+      </div>
       <div class="detail-label" style="margin-top:10px;">CRM Notes</div><div class="detail-notes">${person.notes || html`<span class="muted">No CRM notes</span>`}</div>
+      ${this.renderTextMessages()}
       ${this.renderActivities()}
       <div class="detail-actions"><button class="primary" @click=${() => (this.editing = true)}>Edit</button><button class="danger" @click=${async () => { if (confirm(`Delete ${person.name}?`)) { await this.app.deletePerson(person.id); this.backToList(); } }}>Delete</button></div>
     </div>`;
@@ -285,7 +356,10 @@ export class MCPeople extends LitElement {
       <div class="oauth-card"><div class="oauth-meta"><strong>Google Contacts</strong>${this.googleStatus.connected ? html`<span>Connected${this.googleStatus.accountEmail ? html` as ${this.googleStatus.accountEmail}` : ""}</span>` : html`<span>Disconnected</span>`}</div><div><button class="primary" @click=${() => this.connectGoogle()}>${this.googleStatus.connected ? "Reconnect Google" : "Sign in with Google"}</button>${this.googleStatus.connected ? html`<button @click=${() => this.syncNow()} ?disabled=${this.googleSyncing}>${this.googleSyncing ? "Syncing…" : "Sync now"}</button><button @click=${() => this.disconnectGoogle()}>Disconnect</button>` : nothing}</div></div>
       <div class="count"><span>${this.app.people.length} contacts</span></div>
       <div class="toolbar"><input type="search" placeholder="Search by name, email, company, role, or tag..." .value=${this.searchQuery} @input=${(e: any) => (this.searchQuery = e.target.value)} /><select @change=${(e: any) => (this.filterStatus = e.target.value)}><option value="">All statuses</option>${STATUS_OPTIONS.map((s) => html`<option value=${s} ?selected=${this.filterStatus === s}>${s}</option>`)}</select><button class="primary" @click=${() => (this.viewMode = "add")}>+ Add Contact</button></div>
-      ${people.length === 0 ? html`<div class="empty">No contacts match your filters.</div>` : html`<table><thead><tr><th>Name</th><th>Company</th><th>Role</th><th>Status</th><th>Tags</th><th>Last Contact</th></tr></thead><tbody>${people.map((p) => html`<tr class="clickable" @click=${() => this.openDetail(p)}><td><div>${p.name}</div>${p.email ? html`<div class="muted">${p.email}</div>` : nothing}</td><td>${p.company || "-"}</td><td>${p.role || "-"}</td><td>${this.statusBadge(p.status)}</td><td>${p.tags.length ? html`<span class="tags">${p.tags.map((t) => html`<span class="tag">${t}</span>`)}</span>` : "-"}</td><td class="muted">${this.fmtDate(p.lastContactedAt)}</td></tr>`)}</tbody></table>`}`;
+      ${people.length === 0 ? html`<div class="empty">No contacts match your filters.</div>` : html`<table><thead><tr><th>Name</th><th>Phone</th><th>Company</th><th>Status</th><th>Tags</th><th>Last Contact</th></tr></thead><tbody>${people.map((p) => {
+        const phoneList = p.phones && p.phones.length > 0 ? p.phones : (p.phone ? [{ value: p.phone, type: "mobile", primary: true }] : []);
+        return html`<tr class="clickable" @click=${() => this.openDetail(p)}><td><div>${p.name}</div>${p.email ? html`<div class="muted">${p.email}</div>` : nothing}</td><td class="muted" style="font-size:12px;">${phoneList.length > 0 ? phoneList.map((ph, i) => html`${i > 0 ? html`<br/>` : nothing}${ph.value}`) : "-"}</td><td>${p.company || "-"}</td><td>${this.statusBadge(p.status)}</td><td>${p.tags.length ? html`<span class="tags">${p.tags.map((t) => html`<span class="tag">${t}</span>`)}</span>` : "-"}</td><td class="muted">${this.fmtDate(p.lastContactedAt)}</td></tr>`;
+      })}</tbody></table>`}`;
   }
 
   render() {

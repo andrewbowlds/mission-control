@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import { beginSyncRun, finishSyncRun, getContactsDb, getLatestSyncRun, type SyncRun } from "./contacts-db.js";
 
 let adminApp: any = null;
@@ -22,6 +24,11 @@ function b(v: unknown): number {
   return v ? 1 : 0;
 }
 
+const SA_SEARCH_PATHS = [
+  path.join(os.homedir(), ".config", "openclaw", "edp-firebase-sa.json"),
+  path.join(os.homedir(), ".openclaw", "secrets", "edp-firebase-sa.json"),
+];
+
 function parseServiceAccount(): any {
   const fromPath = process.env.EDP_FIREBASE_SERVICE_ACCOUNT_PATH;
   if (fromPath) {
@@ -29,11 +36,21 @@ function parseServiceAccount(): any {
   }
 
   const raw = process.env.EDP_FIREBASE_SERVICE_ACCOUNT_JSON || process.env.ADMIN_SERVICE_ACCOUNT;
-  if (!raw) throw new Error("Missing EDP_FIREBASE_SERVICE_ACCOUNT_JSON (or ADMIN_SERVICE_ACCOUNT or EDP_FIREBASE_SERVICE_ACCOUNT_PATH)");
-  try {
-    if (raw.trim().startsWith("{")) return JSON.parse(raw);
-  } catch {}
-  return JSON.parse(raw);
+  if (raw) {
+    try {
+      if (raw.trim().startsWith("{")) return JSON.parse(raw);
+    } catch {}
+    return JSON.parse(raw);
+  }
+
+  // Fallback: check well-known file paths
+  for (const p of SA_SEARCH_PATHS) {
+    try {
+      if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, "utf8"));
+    } catch {}
+  }
+
+  throw new Error("Missing EDP_FIREBASE_SERVICE_ACCOUNT_JSON (or ADMIN_SERVICE_ACCOUNT or EDP_FIREBASE_SERVICE_ACCOUNT_PATH)");
 }
 
 async function getAdmin() {

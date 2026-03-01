@@ -43,6 +43,8 @@ import {
 } from "./people-store.js";
 import { listMemoryFiles, readMemoryFile, searchMemory } from "./memory-store.js";
 import { createContactActivity, listContactActivities } from "./contact-activity-store.js";
+import { fetchSmsHistory } from "./firestore-sms.js";
+import { getContactsDb } from "./contacts-db.js";
 import {
   listTemplates,
   getTemplate,
@@ -102,6 +104,7 @@ import {
   getContactsIntegrationStatus,
   disconnectGoogleContactsIntegration,
   syncGoogleContactsIntegration,
+  pushGoogleContact,
 } from "./integrations/google-contacts.js";
 import { createGoogleOAuthStartUrl } from "./google-contacts-auth.js";
 import {
@@ -600,6 +603,24 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     });
 
     respond(true, { activity });
+  });
+
+  api.registerGatewayMethod("mc.people.smsHistory", async ({ params, respond }) => {
+    const personId = typeof params.personId === "string" ? params.personId.trim() : "";
+    if (!personId) return badRequest(respond, "personId is required");
+    const limit = typeof params.limit === "number" ? params.limit : 200;
+
+    try {
+      const db = getContactsDb();
+      const rows = db.prepare("SELECT value FROM contact_phones WHERE contact_id = ?").all(personId) as { value: string }[];
+      const phones = rows.map((r) => r.value).filter(Boolean);
+      if (phones.length === 0) return respond(true, { messages: [] });
+
+      const messages = await fetchSmsHistory(phones, limit);
+      respond(true, { messages });
+    } catch (err) {
+      respond(false, undefined, { code: "FIRESTORE_ERROR", message: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   api.registerGatewayMethod("mc.people.delete", ({ params, respond }) => {
@@ -1440,6 +1461,19 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     try {
       const result = await syncGoogleContactsIntegration();
       context.broadcast("mc.gcontacts", { type: "synced", ...result });
+      respond(true, result);
+    } catch (err) {
+      badRequest(respond, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  api.registerGatewayMethod("mc.gcontacts.push", async ({ params, respond, context }) => {
+    captureGatewayContext(context);
+    const contactId = typeof params.contactId === "string" ? params.contactId : "";
+    if (!contactId) return badRequest(respond, "contactId is required");
+    try {
+      const result = await pushGoogleContact(contactId);
+      context.broadcast("mc.gcontacts", { type: "pushed", contactId, ...result });
       respond(true, result);
     } catch (err) {
       badRequest(respond, err instanceof Error ? err.message : String(err));

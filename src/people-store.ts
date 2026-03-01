@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
-import type { Person, PersonStatus } from "./types.js";
+import type { ContactPhone, Person, PersonStatus } from "./types.js";
 import { getContactsDb } from "./contacts-db.js";
 
 let importedLegacy = false;
@@ -87,6 +87,23 @@ function mapRowToPerson(row: any): Person {
   };
 }
 
+function attachPhones(db: ReturnType<typeof getContactsDb>, people: Person[]): Person[] {
+  if (people.length === 0) return people;
+  const allPhones = db.prepare(
+    "SELECT contact_id, value, type, primary_flag FROM contact_phones ORDER BY primary_flag DESC, id ASC",
+  ).all() as Array<{ contact_id: string; value: string; type: string; primary_flag: number }>;
+  const byContact = new Map<string, ContactPhone[]>();
+  for (const row of allPhones) {
+    let arr = byContact.get(row.contact_id);
+    if (!arr) { arr = []; byContact.set(row.contact_id, arr); }
+    arr.push({ value: row.value, type: row.type ?? "mobile", primary: row.primary_flag === 1 });
+  }
+  for (const p of people) {
+    p.phones = byContact.get(p.id) ?? [];
+  }
+  return people;
+}
+
 export function listPeople(): Person[] {
   ensureLegacyImport();
   const db = getContactsDb();
@@ -100,7 +117,7 @@ export function listPeople(): Person[] {
     FROM contacts c
     ORDER BY c.updated_at DESC
   `).all() as any[];
-  return rows.map(mapRowToPerson);
+  return attachPhones(db, rows.map(mapRowToPerson));
 }
 
 export function getPerson(id: string): Person | null {
@@ -116,7 +133,13 @@ export function getPerson(id: string): Person | null {
     FROM contacts c
     WHERE c.id = ?
   `).get(id) as any;
-  return row ? mapRowToPerson(row) : null;
+  if (!row) return null;
+  const person = mapRowToPerson(row);
+  const phoneRows = db.prepare(
+    "SELECT value, type, primary_flag FROM contact_phones WHERE contact_id = ? ORDER BY primary_flag DESC, id ASC",
+  ).all(id) as Array<{ value: string; type: string; primary_flag: number }>;
+  person.phones = phoneRows.map((r) => ({ value: r.value, type: r.type ?? "mobile", primary: r.primary_flag === 1 }));
+  return person;
 }
 
 export function createPerson(data: {
@@ -221,4 +244,17 @@ export function deletePerson(id: string): boolean {
 
 export function validatePersonStatus(status: unknown): status is PersonStatus {
   return ["lead", "prospect", "customer", "churned", "partner"].includes(String(status));
+}
+
+export function getModifiedSinceSync(): string[] {
+  ensureLegacyImport();
+  const db = getContactsDb();
+  const rows = db.prepare(`
+    SELECT c.id FROM contacts c
+    WHERE (c.updated_at > COALESCE(c.last_synced_at, 0))
+       OR (c.source_primary = 'manual' AND NOT EXISTS (
+             SELECT 1 FROM contact_external_links l WHERE l.contact_id = c.id AND l.provider = 'google'
+           ))
+  `).all() as Array<{ id: string }>;
+  return rows.map((r) => r.id);
 }

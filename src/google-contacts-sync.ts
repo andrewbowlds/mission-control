@@ -318,3 +318,212 @@ export async function runGoogleContactsSync(): Promise<GoogleSyncResult> {
 export function getGoogleSyncStatus(): SyncRun | null {
   return getLatestSyncRun("google");
 }
+
+// ── Push (local → Google) ─────────────────────────────────────────────────
+
+export type GooglePushResult = {
+  contactId: string;
+  resourceName: string;
+  created: boolean;
+};
+
+function buildGooglePersonPayload(
+  row: any,
+  emails: any[],
+  phones: any[],
+  addresses: any[],
+  orgs: any[],
+  urls: any[],
+): Record<string, any> {
+  const person: Record<string, any> = {};
+
+  // Names
+  if (row.given_name || row.family_name || row.display_name) {
+    person.names = [{
+      givenName: row.given_name ?? undefined,
+      familyName: row.family_name ?? undefined,
+      displayName: row.display_name ?? undefined,
+    }];
+  }
+
+  // Email addresses
+  if (emails.length > 0) {
+    person.emailAddresses = emails.map((e) => ({
+      value: e.value,
+      type: e.type ?? "other",
+    }));
+  }
+
+  // Phone numbers
+  if (phones.length > 0) {
+    person.phoneNumbers = phones.map((p) => ({
+      value: p.value,
+      type: p.type ?? "other",
+    }));
+  }
+
+  // Addresses
+  if (addresses.length > 0) {
+    person.addresses = addresses.map((a) => ({
+      type: a.type ?? "other",
+      formattedValue: a.formatted_value ?? undefined,
+      streetAddress: a.street ?? undefined,
+      city: a.city ?? undefined,
+      region: a.region ?? undefined,
+      postalCode: a.postal_code ?? undefined,
+      country: a.country ?? undefined,
+    }));
+  }
+
+  // Organizations
+  if (orgs.length > 0) {
+    person.organizations = orgs.map((o) => ({
+      name: o.name ?? undefined,
+      title: o.title ?? undefined,
+      department: o.department ?? undefined,
+    }));
+  }
+
+  // Biographies (notes)
+  const notes = row.crm_notes || row.google_notes_raw;
+  if (notes) {
+    person.biographies = [{ value: notes, contentType: "TEXT_PLAIN" }];
+  }
+
+  // URLs
+  if (urls.length > 0) {
+    person.urls = urls.map((u) => ({
+      value: u.value,
+      type: u.type ?? "other",
+    }));
+  }
+
+  return person;
+}
+
+export async function pushContactToGoogle(contactId: string): Promise<GooglePushResult> {
+  const token = await getGoogleAccessToken();
+  if (!token) throw new Error("Google account not connected");
+
+  const db = getContactsDb();
+
+  // Load contact + external link
+  const row = db.prepare(`
+    SELECT c.id, c.display_name, c.given_name, c.family_name, c.crm_notes, c.google_notes_raw,
+           (SELECT external_id FROM contact_external_links l WHERE l.contact_id = c.id AND l.provider = 'google' LIMIT 1) AS google_resource_name,
+           (SELECT etag FROM contact_external_links l WHERE l.contact_id = c.id AND l.provider = 'google' LIMIT 1) AS google_etag
+    FROM contacts c
+    WHERE c.id = ?
+  `).get(contactId) as any;
+  if (!row) throw new Error("Contact not found");
+
+  // Load related records
+  const emails = db.prepare("SELECT value, type, primary_flag FROM contact_emails WHERE contact_id = ? ORDER BY primary_flag DESC").all(contactId) as any[];
+  const phones = db.prepare("SELECT value, type, primary_flag FROM contact_phones WHERE contact_id = ? ORDER BY primary_flag DESC").all(contactId) as any[];
+  const addresses = db.prepare("SELECT type, formatted_value, street, city, region, postal_code, country FROM contact_addresses WHERE contact_id = ?").all(contactId) as any[];
+  const orgs = db.prepare("SELECT name, title, department FROM contact_organizations WHERE contact_id = ?").all(contactId) as any[];
+  const urls = db.prepare("SELECT value, type FROM contact_urls WHERE contact_id = ?").all(contactId) as any[];
+
+  const personPayload = buildGooglePersonPayload(row, emails, phones, addresses, orgs, urls);
+  const now = Date.now();
+
+  if (row.google_resource_name) {
+    // UPDATE existing Google contact
+    const resourceName = String(row.google_resource_name);
+    const updateUrl = new URL(`https://people.googleapis.com/v1/${resourceName}:updateContact`);
+    updateUrl.searchParams.set("updatePersonFields", "names,emailAddresses,phoneNumbers,addresses,organizations,biographies,urls");
+
+    // Google requires etag for optimistic locking
+    if (row.google_etag) {
+      personPayload.etag = row.google_etag;
+    }
+
+    const res = await fetch(updateUrl.toString(), {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(personPayload),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Google updateContact failed (${res.status}): ${body.slice(0, 200)}`);
+    }
+
+    const updated = (await res.json()) as any;
+    const newEtag = s(updated.etag) ?? s(updated.metadata?.sources?.[0]?.etag);
+
+    // Update local etag and last_synced_at
+    if (newEtag) {
+      db.prepare("UPDATE contact_external_links SET etag = ?, raw_payload_json = ?, last_seen_at = ?, updated_at = ? WHERE provider = 'google' AND external_id = ?")
+        .run(newEtag, JSON.stringify(updated), now, now, resourceName);
+    }
+    db.prepare("UPDATE contacts SET last_synced_at = ? WHERE id = ?").run(now, contactId);
+
+    return { contactId, resourceName, created: false };
+  } else {
+    // CREATE new Google contact
+    const res = await fetch("https://people.googleapis.com/v1/people:createContact", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(personPayload),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Google createContact failed (${res.status}): ${body.slice(0, 200)}`);
+    }
+
+    const created = (await res.json()) as any;
+    const resourceName = s(created.resourceName);
+    if (!resourceName) throw new Error("Google createContact did not return resourceName");
+
+    const newEtag = s(created.etag) ?? s(created.metadata?.sources?.[0]?.etag);
+
+    // Create external link
+    db.prepare(`
+      INSERT INTO contact_external_links (contact_id, provider, external_id, etag, deleted_flag, raw_payload_json, last_seen_at, created_at, updated_at)
+      VALUES (?, 'google', ?, ?, 0, ?, ?, ?, ?)
+    `).run(contactId, resourceName, newEtag ?? null, JSON.stringify(created), now, now, now);
+
+    db.prepare("UPDATE contacts SET last_synced_at = ?, source_primary = COALESCE(source_primary, 'google') WHERE id = ?").run(now, contactId);
+
+    return { contactId, resourceName, created: true };
+  }
+}
+
+export async function pushModifiedContactsToGoogle(): Promise<{ pushed: number; created: number; errors: number; errorMessages: string[] }> {
+  const db = getContactsDb();
+
+  // Find contacts modified locally since last sync, or manual contacts without a Google link
+  const modified = db.prepare(`
+    SELECT c.id FROM contacts c
+    WHERE (c.updated_at > COALESCE(c.last_synced_at, 0))
+       OR (c.source_primary = 'manual' AND NOT EXISTS (
+             SELECT 1 FROM contact_external_links l WHERE l.contact_id = c.id AND l.provider = 'google'
+           ))
+  `).all() as Array<{ id: string }>;
+
+  let pushed = 0;
+  let created = 0;
+  let errors = 0;
+  const errorMessages: string[] = [];
+
+  for (const { id } of modified) {
+    try {
+      const result = await pushContactToGoogle(id);
+      if (result.created) created++;
+      else pushed++;
+    } catch (err) {
+      errors++;
+      errorMessages.push(`${id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return { pushed, created, errors, errorMessages };
+}

@@ -9,7 +9,9 @@
   },
   "scripts": {
     "build": "vite build",
-    "dev": "vite"
+    "dev": "vite",
+    "check": "tsc --noEmit",
+    "check:watch": "tsc --noEmit --watch"
   },
   "dependencies": {
     "@noble/ed25519": "^2.0.0",

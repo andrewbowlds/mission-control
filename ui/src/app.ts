@@ -137,11 +137,14 @@ export type Room = {
   createdAt: number;
 };
 
+export type ContactPhone = { value: string; type: string; primary: boolean };
+
 export type Person = {
   id: string;
   name: string;
   email?: string;
   phone?: string;
+  phones?: ContactPhone[];
   company?: string;
   role?: string;
   status: "lead" | "prospect" | "customer" | "churned" | "partner";
@@ -588,6 +591,7 @@ export type AppFacade = {
   gcontactsConnect(): Promise<string | undefined>;
   gcontactsDisconnect(): Promise<void>;
   gcontactsSync(): Promise<void>;
+  gcontactsPush(contactId: string): Promise<void>;
   githubConnect(data: { token: string; webhookSecret?: string }): Promise<void>;
   githubDisconnect(): Promise<void>;
   githubSync(): Promise<void>;
@@ -652,27 +656,30 @@ export class McApp extends LitElement {
   static styles = css`
     :host {
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
       height: 100vh;
       background: #0a0a0f;
       color: #e2e8f0;
       font-family: system-ui, -apple-system, sans-serif;
     }
-    .topbar {
+    .sidebar {
       display: flex;
-      align-items: center;
-      gap: 0;
-      padding: 0 20px;
+      flex-direction: column;
+      align-items: stretch;
+      width: 180px;
+      height: 100vh;
+      padding: 12px 0;
       background: #0d0d14;
-      border-bottom: 1px solid #1e1e2e;
-      height: 48px;
+      border-right: 1px solid #1e1e2e;
       flex-shrink: 0;
+      overflow-y: auto;
     }
     .brand {
       font-weight: 700;
       font-size: 14px;
       color: #a78bfa;
-      margin-right: 28px;
+      padding: 0 14px;
+      margin-bottom: 12px;
       letter-spacing: 0.06em;
       text-transform: uppercase;
     }
@@ -682,15 +689,16 @@ export class McApp extends LitElement {
       color: #94a3b8;
       font-size: 13px;
       font-weight: 500;
-      padding: 0 14px;
-      height: 48px;
+      padding: 8px 14px;
+      width: 100%;
+      text-align: left;
       cursor: pointer;
-      border-bottom: 2px solid transparent;
+      border-left: 3px solid transparent;
       transition: color 0.15s, border-color 0.15s;
       position: relative;
     }
     .nav-tab:hover { color: #e2e8f0; }
-    .nav-tab.active { color: #a78bfa; border-bottom-color: #a78bfa; }
+    .nav-tab.active { color: #a78bfa; border-left-color: #a78bfa; }
     .badge {
       position: absolute;
       top: 8px;
@@ -708,19 +716,19 @@ export class McApp extends LitElement {
       padding: 0 4px;
     }
     .status {
-      margin-left: auto;
       font-size: 11px;
       color: #64748b;
       display: flex;
       align-items: center;
       gap: 6px;
+      padding: 8px 14px;
     }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: #374151; flex-shrink: 0; }
     .dot.connecting { background: #f59e0b; }
     .dot.connected  { background: #22c55e; }
     .dot.disconnected { background: #ef4444; }
-    .content { height: calc(100vh - 48px); overflow: hidden; }
-    .bell-wrap { position: relative; margin-left: auto; margin-right: 8px; }
+    .content { height: 100vh; flex: 1; overflow: hidden; }
+    .bell-wrap { position: relative; margin-top: auto; padding: 8px 14px; }
     .bell-btn {
       background: none; border: none; color: #94a3b8; font-size: 18px;
       cursor: pointer; padding: 4px 8px; position: relative;
@@ -733,7 +741,7 @@ export class McApp extends LitElement {
       display: flex; align-items: center; justify-content: center; padding: 0 3px;
     }
     .notif-panel {
-      position: absolute; top: 40px; right: 0; z-index: 999;
+      position: absolute; bottom: 0; left: 100%; z-index: 999;
       width: 380px; max-height: 480px; overflow-y: auto;
       background: #12121a; border: 1px solid #1e1e2e; border-radius: 8px;
       box-shadow: 0 8px 32px rgba(0,0,0,0.5);
@@ -1611,6 +1619,11 @@ export class McApp extends LitElement {
     void this.loadIntegrations();
   }
 
+  async gcontactsPush(contactId: string): Promise<void> {
+    await this.gw.request("mc.gcontacts.push", { contactId }).catch(() => null);
+    void this.loadPeople();
+  }
+
   async githubConnect(data: { token: string; webhookSecret?: string }): Promise<void> {
     await this.gw.request("mc.github.connect", data).catch(() => null);
     void this.loadIntegrations();
@@ -1740,6 +1753,7 @@ export class McApp extends LitElement {
       gcontactsConnect: () => this.gcontactsConnect(),
       gcontactsDisconnect: () => this.gcontactsDisconnect(),
       gcontactsSync: () => this.gcontactsSync(),
+      gcontactsPush: (id) => this.gcontactsPush(id),
       githubConnect: (d) => this.githubConnect(d),
       githubDisconnect: () => this.githubDisconnect(),
       githubSync: () => this.githubSync(),
@@ -1823,7 +1837,7 @@ export class McApp extends LitElement {
     const facade = this.buildFacade();
     const pendingCount = this.pendingApprovalCount;
     return html`
-      <div class="topbar">
+      <div class="sidebar">
         <span class="brand">Mission Control</span>
         <button
           class="nav-tab ${this.tab === "dashboard" ? "active" : ""}"
@@ -1884,8 +1898,8 @@ export class McApp extends LitElement {
           </button>
           ${this.notificationsOpen ? this.renderNotificationPanel() : ""}
         </div>
-        <div class="status" style="margin-left:0;">
-          <button class="nav-tab" style="height:32px;padding:0 10px;" @click=${() => this.promptGatewayToken()}>
+        <div class="status">
+          <button class="nav-tab" style="padding:4px 14px;" @click=${() => this.promptGatewayToken()}>
             Token
           </button>
           <div class="dot ${this.gwStatus}"></div>

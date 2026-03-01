@@ -13,6 +13,8 @@ import {
 import {
   runGoogleContactsSync,
   getGoogleSyncStatus,
+  pushContactToGoogle,
+  pushModifiedContactsToGoogle,
 } from "../google-contacts-sync.js";
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────
@@ -61,33 +63,64 @@ export function disconnectGoogleContactsIntegration(): void {
   }
 }
 
-// ── Sync ─────────────────────────────────────────────────────────────────────
+// ── Sync (bidirectional) ─────────────────────────────────────────────────────
 
 export async function syncGoogleContactsIntegration(): Promise<{
-  imported: number;
-  updated: number;
-  skipped: number;
+  pulled: number;
+  pushed: number;
+  created: number;
   errors: number;
 }> {
   const integration = getIntegrationByType("google_contacts");
   if (!integration) throw new Error("No Google Contacts integration found.");
 
+  let pushed = 0;
+  let created = 0;
+  let pushErrors = 0;
+
   try {
-    const result = await runGoogleContactsSync();
-    if (result.status === "failed") {
-      markError(integration.id, result.errorSummary ?? "Sync failed");
-      throw new Error(result.errorSummary ?? "Google Contacts sync failed");
+    // Phase 1: Push local changes to Google (local wins)
+    const pushResult = await pushModifiedContactsToGoogle();
+    pushed = pushResult.pushed;
+    created = pushResult.created;
+    pushErrors = pushResult.errors;
+
+    // Phase 2: Pull from Google (new/changed contacts come down)
+    const pullResult = await runGoogleContactsSync();
+    if (pullResult.status === "failed") {
+      markError(integration.id, pullResult.errorSummary ?? "Pull sync failed");
+      throw new Error(pullResult.errorSummary ?? "Google Contacts pull sync failed");
     }
+
     markSynced(integration.id);
     markConnected(integration.id);
     return {
-      imported: result.importedCount,
-      updated: result.updatedCount,
-      skipped: result.skippedCount,
-      errors: result.errorCount,
+      pulled: pullResult.importedCount + pullResult.updatedCount,
+      pushed,
+      created,
+      errors: pullResult.errorCount + pushErrors,
     };
   } catch (err) {
-    if (err instanceof Error && err.message.includes("Sync failed")) throw err;
+    if (err instanceof Error && err.message.includes("sync failed")) throw err;
+    markError(integration.id, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+}
+
+// ── Push Single Contact ──────────────────────────────────────────────────────
+
+export async function pushGoogleContact(contactId: string): Promise<{
+  resourceName: string;
+  created: boolean;
+}> {
+  const integration = getIntegrationByType("google_contacts");
+  if (!integration) throw new Error("No Google Contacts integration found.");
+
+  try {
+    const result = await pushContactToGoogle(contactId);
+    markSynced(integration.id);
+    return { resourceName: result.resourceName, created: result.created };
+  } catch (err) {
     markError(integration.id, err instanceof Error ? err.message : String(err));
     throw err;
   }

@@ -110,6 +110,8 @@ Smart routing and agent performance:
 
 ## CRM / People (mc.people.*)
 - \`mc.people.list\` / \`mc.people.get\` / \`mc.people.create\` / \`mc.people.update\`
+- \`mc.people.activities.list\` — List communication history. Params: { personId: string, channel?: "call"|"text"|"email", direction?: "inbound"|"outbound", query?: string, limit?: number }
+- \`mc.people.activities.create\` — Log a communication. Params: { personId: string, channel: "call"|"text"|"email", direction: "inbound"|"outbound", summary?: string, status?: string, taskId?: string, sessionId?: string, messageId?: string, providerId?: string, providerName?: string }
 
 ## Google Calendar (mc.gcal.*)
 - \`mc.gcal.events.list\` — List calendar events. Params: { from?: number, to?: number }
@@ -135,5 +137,6 @@ Multi-agent collaboration:
 - If a task is outside your expertise, use \`mc.delegations.autoDelegate\` to hand it to a better-suited agent.
 - Use \`mc.delegations.suggestions\` to see which agents are best suited before delegating.
 - Delegations require operator approval by default — the operator reviews and approves/rejects.
+- **TEXT MESSAGE LOGGING**: Whenever you send or receive a text/SMS with a contact, you MUST log it via \`mc.people.activities.create\` with channel="text". Include the full message content in the \`summary\` field, set direction="outbound" for messages you send and direction="inbound" for messages received. Always include \`taskId\` and \`sessionId\` when available so conversations are traceable. This builds the conversation history for each person in the CRM.
 </mission-control>`;
 }

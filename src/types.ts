@@ -120,11 +120,14 @@ export type CronJob = {
 
 export type PersonStatus = "lead" | "prospect" | "customer" | "churned" | "partner";
 
+export type ContactPhone = { value: string; type: string; primary: boolean };
+
 export type Person = {
   id: string;
   name: string;
   email?: string;
   phone?: string;
+  phones?: ContactPhone[];
   company?: string;
   role?: string;
   status: PersonStatus;
