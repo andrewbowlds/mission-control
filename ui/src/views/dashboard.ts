@@ -2,6 +2,23 @@ import { LitElement, css, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { AppFacade, AgentRow, SessionRow, Task, TaskStatus, OverviewMetrics } from "../app.ts";
 
+const AGENT_SPECIALIZATIONS: Record<string, string> = {
+  main: "Primary orchestrator",
+  ada: "Software engineering",
+  apollo: "Sales & lead generation",
+  brett: "Transaction coordination",
+  delta: "Research & analysis",
+  echo: "Communications",
+  faith: "Marketing & content",
+  jordan: "Client relations",
+  mason: "Market analysis & pricing",
+  pierce: "Property management",
+  sage: "Strategy & planning",
+  william: "Financial operations",
+  xavier: "X/Twitter strategy",
+  kimberly: "Team operations",
+};
+
 const STATUS_COLORS: Record<string, string> = {
   pending: "#64748b",
   queued: "#818cf8",
@@ -186,6 +203,7 @@ export class McDashboard extends LitElement {
       flex-shrink: 0;
     }
     .agent-name { font-weight: 600; font-size: 14px; }
+    .agent-spec { font-size: 11px; color: #8b5cf6; margin-top: 1px; }
     .agent-id   { font-size: 11px; color: #64748b; margin-top: 2px; }
     .stats {
       display: grid;
@@ -394,6 +412,7 @@ export class McDashboard extends LitElement {
     const tasks = this.agentTasks(agent.id);
     const name = agent.identity?.name ?? agent.name ?? agent.id;
     const emoji = agent.identity?.emoji ?? "";
+    const spec = AGENT_SPECIALIZATIONS[agent.id] ?? "";
     const activeTasks = tasks.filter((t) => t.status === "running");
     const queuedTasks = tasks.filter((t) => t.status === "queued" || t.status === "pending");
     return html`
@@ -402,6 +421,7 @@ export class McDashboard extends LitElement {
           <div class="avatar">${emoji || "A"}</div>
           <div>
             <div class="agent-name">${name}</div>
+            ${spec ? html`<div class="agent-spec">${spec}</div>` : ""}
             <div class="agent-id">${agent.id}</div>
           </div>
         </div>

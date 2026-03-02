@@ -88,17 +88,18 @@ function saveDeviceToken(deviceId: string, role: string, token: string, scopes: 
   } catch { /* best-effort */ }
 }
 
+const CLIENT_ID = "openclaw-control-ui";
+const CLIENT_MODE = "webchat";
+
 function buildPayload(p: {
   deviceId: string; role: string; scopes: string[];
-  signedAtMs: number; token: string | null; nonce?: string;
+  signedAtMs: number; token: string | null; nonce: string;
 }): string {
-  const version = p.nonce ? "v2" : "v1";
-  const parts = [
-    version, p.deviceId, "control-ui", "webchat",
+  return [
+    "v2", p.deviceId, CLIENT_ID, CLIENT_MODE,
     p.role, p.scopes.join(","), String(p.signedAtMs), p.token ?? "",
-  ];
-  if (p.nonce) parts.push(p.nonce);
-  return parts.join("|");
+    p.nonce,
+  ].join("|");
 }
 
 // ── Client types ──────────────────────────────────────────────────────────────
@@ -202,34 +203,17 @@ export class MCGatewayClient {
 
     type HelloPayload = { auth?: { deviceToken?: string; role?: string; scopes?: string[] } };
 
-    // If a manual gateway token is provided, always use token-only auth and skip device auth.
-    // Do this even when the browser is in a non-secure context where crypto.subtle is unavailable.
-    if (this.manualToken) {
-      void this.request<HelloPayload>("connect", {
-        minProtocol: 3, maxProtocol: 3,
-        client: { id: "openclaw-control-ui", version: "1.0.0", platform: navigator.platform ?? "web", mode: "webchat" },
-        role, scopes, caps: [],
-        auth: { token: this.manualToken },
-        userAgent: navigator.userAgent,
-        locale: navigator.language,
-      }).then(() => {
-        this.backoffMs = 800;
-        this.onStatus("connected");
-        this.onReady();
-      }).catch(() => {
-        this.ws?.close(4008, "connect failed");
-      });
-      return;
-    }
-
-    if (isSecure) {
+    if (isSecure && this.nonce) {
+      // Secure context with challenge nonce — use device identity auth (v2 payload).
+      // The gateway requires device auth for control UI connections.
+      const nonce = this.nonce;
       const identity = await loadOrCreateIdentity();
-      const authToken = loadDeviceToken(identity.deviceId, role);
+      const deviceToken = loadDeviceToken(identity.deviceId, role);
 
       const signedAtMs = Date.now();
       const payload = buildPayload({
         deviceId: identity.deviceId, role, scopes, signedAtMs,
-        token: authToken, nonce: this.nonce ?? undefined,
+        token: deviceToken, nonce,
       });
       const sig = b64Enc(
         await signAsync(new TextEncoder().encode(payload), b64Dec(identity.privateKey)),
@@ -239,14 +223,30 @@ export class MCGatewayClient {
         minProtocol: 3, maxProtocol: 3,
         client: { id: "openclaw-control-ui", version: "1.0.0", platform: navigator.platform ?? "web", mode: "webchat" },
         role, scopes, caps: [],
-        auth: authToken ? { token: authToken } : undefined,
-        device: { id: identity.deviceId, publicKey: identity.publicKey, signature: sig, signedAt: signedAtMs, nonce: this.nonce ?? undefined },
+        auth: deviceToken ? { token: deviceToken } : undefined,
+        device: { id: identity.deviceId, publicKey: identity.publicKey, signature: sig, signedAt: signedAtMs, nonce },
         userAgent: navigator.userAgent,
         locale: navigator.language,
       }).then((hello) => {
         if (hello?.auth?.deviceToken) {
           saveDeviceToken(identity.deviceId, hello.auth.role ?? role, hello.auth.deviceToken, hello.auth.scopes ?? []);
         }
+        this.backoffMs = 800;
+        this.onStatus("connected");
+        this.onReady();
+      }).catch(() => {
+        this.ws?.close(4008, "connect failed");
+      });
+    } else if (this.manualToken) {
+      // Non-secure context (plain HTTP) with manual token — try token-only auth.
+      void this.request<HelloPayload>("connect", {
+        minProtocol: 3, maxProtocol: 3,
+        client: { id: "openclaw-control-ui", version: "1.0.0", platform: navigator.platform ?? "web", mode: "webchat" },
+        role, scopes, caps: [],
+        auth: { token: this.manualToken },
+        userAgent: navigator.userAgent,
+        locale: navigator.language,
+      }).then(() => {
         this.backoffMs = 800;
         this.onStatus("connected");
         this.onReady();
