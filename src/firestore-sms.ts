@@ -47,6 +47,13 @@ function normalizePhone(phone: string): string {
   return `+${digits}`;
 }
 
+export type SmsMediaEntry = {
+  originalUrl: string;
+  contentType: string;
+  storagePath: string;
+  permanentUrl: string;
+};
+
 export type SmsLogEntry = {
   direction: "inbound" | "outbound";
   body: string;
@@ -55,7 +62,31 @@ export type SmsLogEntry = {
   timestamp: string;
   messageSid?: string;
   variantName?: string;
+  agentId?: string;
+  numMedia?: number;
+  media?: SmsMediaEntry[];
 };
+
+/**
+ * Write an SMS log entry to the twilioSmsLogs collection.
+ * Uses messageSid as doc ID for dedup when available.
+ */
+export async function logSmsToTwilioLogs(entry: SmsLogEntry): Promise<string> {
+  const db = await getDb();
+  const col = db.collection("twilioSmsLogs");
+  const data = {
+    ...entry,
+    timestamp: entry.timestamp || new Date().toISOString(),
+  };
+
+  if (entry.messageSid) {
+    await col.doc(entry.messageSid).set(data, { merge: true });
+    return entry.messageSid;
+  }
+
+  const ref = await col.add(data);
+  return ref.id;
+}
 
 export async function fetchSmsHistory(
   rawPhones: string[],
@@ -88,6 +119,9 @@ export async function fetchSmsHistory(
       timestamp: d.timestamp ?? "",
       messageSid: d.messageSid,
       variantName: d.variantName,
+      agentId: d.agentId,
+      numMedia: d.numMedia,
+      media: d.media,
     });
   }
 

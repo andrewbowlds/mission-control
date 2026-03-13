@@ -14,10 +14,11 @@ import "./views/workflows.ts";
 import "./views/automations.ts";
 import "./views/analytics.ts";
 import "./views/integrations.ts";
+import "./views/live-logs.ts";
 
 declare global {
   interface Window {
-    __mcBootstrap?: { gatewayUrl?: string; basePath?: string };
+    __mcBootstrap?: { gatewayUrl?: string; basePath?: string; initialToken?: string };
   }
 }
 
@@ -474,7 +475,7 @@ export type MCDelegation = {
   resolvedAt?: number;
 };
 
-type Tab = "dashboard" | "tasks" | "approvals" | "chat" | "people" | "memory" | "calendar" | "team" | "trello" | "workflows" | "automations" | "analytics" | "integrations";
+type Tab = "dashboard" | "tasks" | "approvals" | "chat" | "people" | "memory" | "calendar" | "team" | "trello" | "workflows" | "automations" | "analytics" | "integrations" | "live-logs";
 
 const MC_GATEWAY_TOKEN_KEY = "mc.gateway.token.v1";
 
@@ -818,6 +819,7 @@ export class McApp extends LitElement {
   @state() private unreadCount = 0;
   @state() private notificationsOpen = false;
   @state() private delegations: MCDelegation[] = [];
+  @state() private showingTokenInput = false;
 
   private gw!: MCGatewayClient;
 
@@ -830,11 +832,12 @@ export class McApp extends LitElement {
     }
   }
 
-  private promptGatewayToken(): void {
-    const existing = this.getSavedManualToken() ?? "";
-    const next = window.prompt("Enter OpenClaw gateway token (leave blank to clear):", existing);
-    if (next === null) return;
-    const trimmed = next.trim();
+  private toggleTokenInput(): void {
+    this.showingTokenInput = !this.showingTokenInput;
+  }
+
+  private saveManualToken(token: string): void {
+    const trimmed = token.trim();
     try {
       if (trimmed) localStorage.setItem(MC_GATEWAY_TOKEN_KEY, trimmed);
       else localStorage.removeItem(MC_GATEWAY_TOKEN_KEY);
@@ -844,6 +847,7 @@ export class McApp extends LitElement {
     this.gw.setManualToken(trimmed || null);
     this.gw.stop();
     this.gw.start();
+    this.showingTokenInput = false;
   }
 
   connectedCallback() {
@@ -862,7 +866,7 @@ export class McApp extends LitElement {
       (evt) => this.handleEvent(evt),
       () => void this.loadAll(),
       (s) => { this.gwStatus = s; },
-      this.getSavedManualToken(),
+      this.getSavedManualToken() || window.__mcBootstrap?.initialToken,
     );
     this.gw.start();
   }
@@ -873,6 +877,8 @@ export class McApp extends LitElement {
   }
 
   private handleEvent(evt: GatewayEventFrame): void {
+    window.dispatchEvent(new CustomEvent("mc-gateway-event", { detail: evt }));
+
     if (evt.event === "chat") {
       void this.loadSessions();
     }
@@ -1809,8 +1815,8 @@ export class McApp extends LitElement {
           </div>
         </div>
         ${this.notifications.length === 0
-          ? html`<div class="notif-empty">No notifications</div>`
-          : this.notifications.map((n) => html`
+        ? html`<div class="notif-empty">No notifications</div>`
+        : this.notifications.map((n) => html`
             <div class="notif-item ${n.read ? "" : "unread"}" @click=${() => void this.markNotificationRead(n.id)}>
               <button class="notif-dismiss" @click=${(e: Event) => { e.stopPropagation(); void this.dismissNotificationById(n.id); }}>x</button>
               <div class="n-title">
@@ -1888,6 +1894,10 @@ export class McApp extends LitElement {
           @click=${() => { this.tab = "integrations"; }}
         >Integrations</button>
         <button
+          class="nav-tab ${this.tab === "live-logs" ? "active" : ""}"
+          @click=${() => { this.tab = "live-logs"; }}
+        >Live Logs</button>
+        <button
           class="nav-tab ${this.tab === "trello" ? "active" : ""}"
           @click=${() => { this.tab = "trello"; }}
         >Trello</button>
@@ -1899,9 +1909,28 @@ export class McApp extends LitElement {
           ${this.notificationsOpen ? this.renderNotificationPanel() : ""}
         </div>
         <div class="status">
-          <button class="nav-tab" style="padding:4px 14px;" @click=${() => this.promptGatewayToken()}>
+          <button class="nav-tab" style="padding:4px 14px;" @click=${() => this.toggleTokenInput()}>
             Token
           </button>
+          ${this.showingTokenInput ? html`
+            <div style="position:fixed; bottom:40px; left:180px; background:#1e1e2e; padding:12px; border:1px solid #a78bfa; border-radius:8px; z-index:1000; box-shadow:0 8px 32px rgba(0,0,0,0.5); display:flex; gap:8px;">
+              <input 
+                type="password" 
+                id="manual-token-input"
+                placeholder="Paste gateway token..." 
+                .value=${this.getSavedManualToken() || ""}
+                style="background:#0a0a0f; border:1px solid #374151; color:#fff; padding:4px 8px; border-radius:4px; font-size:12px; width:200px;"
+                @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') this.saveManualToken((e.target as HTMLInputElement).value); }}
+              >
+              <button 
+                style="background:#a78bfa; color:#000; border:none; padding:4px 8px; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer;"
+                @click=${() => {
+          const val = (this.shadowRoot?.getElementById('manual-token-input') as HTMLInputElement)?.value;
+          this.saveManualToken(val || "");
+        }}
+              >Set</button>
+            </div>
+          ` : ""}
           <div class="dot ${this.gwStatus}"></div>
           ${this.gwStatus === "connected" ? "Live" : this.gwStatus === "connecting" ? "Connecting..." : "Offline"}
         </div>
@@ -1920,6 +1949,7 @@ export class McApp extends LitElement {
         ${this.tab === "automations" ? html`<mc-automations .app=${facade}></mc-automations>` : ""}
         ${this.tab === "analytics" ? html`<mc-analytics .app=${facade}></mc-analytics>` : ""}
         ${this.tab === "integrations" ? html`<mc-integrations .app=${facade}></mc-integrations>` : ""}
+        ${this.tab === "live-logs" ? html`<mc-live-logs .client=${facade.gw}></mc-live-logs>` : ""}
       </div>
     `;
   }

@@ -209,11 +209,12 @@ export class MCGatewayClient {
       const nonce = this.nonce;
       const identity = await loadOrCreateIdentity();
       const deviceToken = loadDeviceToken(identity.deviceId, role);
+      const authToken = deviceToken || this.manualToken;
 
       const signedAtMs = Date.now();
       const payload = buildPayload({
         deviceId: identity.deviceId, role, scopes, signedAtMs,
-        token: deviceToken, nonce,
+        token: authToken, nonce,
       });
       const sig = b64Enc(
         await signAsync(new TextEncoder().encode(payload), b64Dec(identity.privateKey)),
@@ -223,7 +224,7 @@ export class MCGatewayClient {
         minProtocol: 3, maxProtocol: 3,
         client: { id: "openclaw-control-ui", version: "1.0.0", platform: navigator.platform ?? "web", mode: "webchat" },
         role, scopes, caps: [],
-        auth: deviceToken ? { token: deviceToken } : undefined,
+        auth: authToken ? { token: authToken } : undefined,
         device: { id: identity.deviceId, publicKey: identity.publicKey, signature: sig, signedAt: signedAtMs, nonce },
         userAgent: navigator.userAgent,
         locale: navigator.language,

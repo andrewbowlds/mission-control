@@ -288,7 +288,6 @@ export function handleMissionControlRequest(
 ): boolean {
   const rawUrl = req.url ?? "/";
   const url = rawUrl.split("?")[0];
-
   if (url.startsWith(API_PREFIX_UNSCOPED)) return handleGoogleApi(req, res, rawUrl);
   if (url.startsWith(FIRESTORE_API_PREFIX_UNSCOPED)) return handleFirestoreApi(req, res, rawUrl);
   if (url.startsWith(GCAL_API_PREFIX_UNSCOPED)) return handleGCalApi(req, res, rawUrl);

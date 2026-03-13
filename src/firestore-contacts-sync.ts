@@ -166,7 +166,7 @@ function upsertFromFirestoreDoc(db: any, docId: string, payload: Record<string, 
   for (const a of addrs) {
     db.prepare(`INSERT INTO contact_addresses (contact_id, type, formatted_value, street, city, region, postal_code, country, primary_flag)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(contactId, s(a.label) ?? s(a.type) ?? null, s(a.address) ?? s(a.formattedValue) ?? null, s(a.street), s(a.city), s(a.state) ?? s(a.region), s(a.postalCode), s(a.country), b(a.primary));
+      .run(contactId, s(a.label) ?? s(a.type) ?? null, s(a.address) ?? s(a.formattedValue) ?? null, s(a.street) ?? null, s(a.city) ?? null, s(a.state) ?? s(a.region) ?? null, s(a.postalCode) ?? null, s(a.country) ?? null, b(a.primary));
   }
 
   replaceChildren(db, "contact_organizations", contactId);

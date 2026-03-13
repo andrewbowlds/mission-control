@@ -3,6 +3,15 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "slackWebhookUrl": {
+        "type": "string",
+        "format": "uri"
+      },
+      "discordWebhookUrl": {
+        "type": "string",
+        "format": "uri"
+      }
+    }
   }
 }

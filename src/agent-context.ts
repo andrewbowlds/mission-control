@@ -1,15 +1,16 @@
 /**
- * Builds the Mission Control context string injected into every agent's
- * system prompt via the before_prompt_build hook. This teaches agents
- * about MC's capabilities and how to use them.
+ * Builds the Mission Control context string injected into agent prompts
+ * via the before_prompt_build hook.
+ *
+ * - First message in a session: full method reference + status
+ * - Subsequent messages: just live status + short reminder
  */
 
 import { getEngineStatus } from "./execution-engine.js";
 import { listTasks } from "./task-engine.js";
+import { getBriefingContext } from "./briefing-engine.js";
 
-export function buildMissionControlContext(): string {
-  // Get live status summary for agents
-  let statusSummary = "";
+function buildStatusSummary(): string {
   try {
     const status = getEngineStatus();
     const pendingTasks = listTasks({ status: "pending", limit: 5 });
@@ -29,10 +30,40 @@ export function buildMissionControlContext(): string {
       parts.push("Pending tasks: " + pendingTasks.map((t) => `"${t.title}" [${t.priority}]`).join(", "));
     }
 
-    statusSummary = parts.join("\n");
+    return parts.join("\n");
   } catch {
-    statusSummary = "Engine status unavailable";
+    return "Engine status unavailable";
   }
+}
+
+function buildBriefingSection(agentId: string): string {
+  try {
+    const briefing = getBriefingContext(agentId);
+    if (!briefing) return "";
+    return `\n${briefing}`;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Condensed context for follow-up messages (status only, no method reference).
+ */
+export function buildMissionControlContextCondensed(): string {
+  const statusSummary = buildStatusSummary();
+  return `<mission-control>
+# Mission Control — Status Update
+${statusSummary}
+
+You have access to Mission Control (mc.*) methods for tasks, workflows, approvals, delegations, intelligence, analytics, people/CRM, calendar, GitHub, notifications, Trello boards, and chat rooms. Refer to the full method reference provided at the start of this session.
+</mission-control>`;
+}
+
+/**
+ * Full context for the first message in a session.
+ */
+export function buildMissionControlContext(agentId?: string): string {
+  const statusSummary = buildStatusSummary();
 
   return `<mission-control>
 # Mission Control — Agent Orchestration Platform
@@ -138,5 +169,11 @@ Multi-agent collaboration:
 - Use \`mc.delegations.suggestions\` to see which agents are best suited before delegating.
 - Delegations require operator approval by default — the operator reviews and approves/rejects.
 - **TEXT MESSAGE LOGGING**: Whenever you send or receive a text/SMS with a contact, you MUST log it via \`mc.people.activities.create\` with channel="text". Include the full message content in the \`summary\` field, set direction="outbound" for messages you send and direction="inbound" for messages received. Always include \`taskId\` and \`sessionId\` when available so conversations are traceable. This builds the conversation history for each person in the CRM.
+
+## Briefings (mc.briefing.*)
+- \`mc.briefing.today\` — Get your daily briefing. Params: { agentId?: string }
+- \`mc.briefing.history\` — Past briefings. Params: { agentId: string, limit?: number }
+- \`mc.briefing.regenerate\` — Force regenerate. Params: { agentId?: string, date?: string }
+${agentId ? buildBriefingSection(agentId) : ""}
 </mission-control>`;
 }

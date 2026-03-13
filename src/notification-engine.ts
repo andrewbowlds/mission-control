@@ -5,6 +5,52 @@ import type {
   NotificationType,
   NotificationSeverity,
 } from "./types.js";
+// ── Config ───────────────────────────────────────────────────────────────────
+
+let slackWebhookUrl: string | undefined;
+let discordWebhookUrl: string | undefined;
+
+export function setWebhookConfig(config?: { slack?: string; discord?: string }): void {
+  if (config?.slack) slackWebhookUrl = config.slack;
+  if (config?.discord) discordWebhookUrl = config.discord;
+}
+
+// ── Webhook Dispatch ────────────────────────────────────────────────────────
+
+async function dispatchWebhook(notification: Notification): Promise<void> {
+  if (notification.severity !== "warning" && notification.severity !== "error") return;
+  if (!slackWebhookUrl && !discordWebhookUrl) return;
+
+  const title = notification.title;
+  let body = notification.body ? `\n> ${notification.body}` : "";
+  if (notification.severity === "error") body = `🚨 **ERROR**: ${title}${body}`;
+  else if (notification.severity === "warning") body = `⚠️ **WARNING**: ${title}${body}`;
+  else body = `${title}${body}`;
+
+  if (slackWebhookUrl) {
+    try {
+      await fetch(slackWebhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: body }),
+      });
+    } catch (e) {
+      console.error("[mission-control] Failed to send Slack webhook:", e);
+    }
+  }
+
+  if (discordWebhookUrl) {
+    try {
+      await fetch(discordWebhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: body }),
+      });
+    } catch (e) {
+      console.error("[mission-control] Failed to send Discord webhook:", e);
+    }
+  }
+}
 
 // ── Row Mapping ─────────────────────────────────────────────────────────────
 
@@ -60,7 +106,12 @@ export function createNotification(data: {
     now,
   );
 
-  return getNotification(id)!;
+  const created = getNotification(id)!;
+
+  // Fire and forget webhook
+  dispatchWebhook(created).catch(() => { });
+
+  return created;
 }
 
 export function getNotification(id: string): Notification | undefined {

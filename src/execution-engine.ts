@@ -31,6 +31,7 @@ import {
   notifyTaskFailed,
   checkDeadlines,
 } from "./notification-engine.js";
+import { maybeTriggerDailyBriefings } from "./briefing-engine.js";
 
 type GatewayContext = GatewayRequestHandlerOptions["context"];
 type BroadcastFn = GatewayContext["broadcast"];
@@ -40,7 +41,7 @@ type BroadcastFn = GatewayContext["broadcast"];
 let gatewayContext: GatewayContext | null = null;
 let tickInterval: ReturnType<typeof setInterval> | null = null;
 let engineConfig = {
-  maxConcurrent: 3,
+  maxConcurrent: 5,
   autoExecute: true,
   tickIntervalMs: 5000,
 };
@@ -48,7 +49,15 @@ let engineConfig = {
 // ── Context Management ──────────────────────────────────────────────────────
 
 export function captureGatewayContext(ctx: GatewayContext): void {
+  // Skip fallback contexts from agent tool dispatch (they are Proxy stubs)
+  const marker = Symbol.for("mc-dispatch-fallback");
+  if ((ctx as any)[marker]) return;
   gatewayContext = ctx;
+}
+
+/** Returns the captured gateway context for internal dispatch (agent tool). */
+export function getGatewayContext(): GatewayContext | null {
+  return gatewayContext;
 }
 
 function getBroadcast(): BroadcastFn | null {
@@ -118,12 +127,17 @@ function buildAuthPayload(p: {
     platform, deviceFamily].join("|");
 }
 
+function resolveEnvVar(value: string): string {
+  return value.replace(/\$\{([^}]+)\}/g, (_, name) => process.env[name] ?? "");
+}
+
 function loadGatewayAuthToken(): string | null {
   const stateDir = process.env.OPENCLAW_STATE_DIR?.trim() || path.join(os.homedir(), ".openclaw");
   const configPath = path.join(stateDir, "openclaw.json");
   try {
     const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    return config?.gateway?.auth?.token ?? null;
+    const token = config?.gateway?.auth?.token ?? null;
+    return token ? resolveEnvVar(token) : null;
   } catch { return null; }
 }
 
@@ -207,9 +221,12 @@ async function sendAuthenticatedAgentRequest(params: {
   const authToken = gatewayToken || deviceToken || "";
 
   return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const settle = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
+
     const timeout = setTimeout(() => {
       try { ws.close(); } catch {}
-      reject(new Error("Gateway agent request timed out"));
+      settle(() => reject(new Error("Gateway agent request timed out")));
     }, 30000);
 
     const ws = new WebSocket(url);
@@ -222,7 +239,7 @@ async function sendAuthenticatedAgentRequest(params: {
         // Step 1: Handle challenge — sign nonce and send connect frame
         if (data.type === "event" && data.event === "connect.challenge") {
           const nonce = data.payload?.nonce;
-          if (!nonce) { ws.close(); reject(new Error("No nonce")); return; }
+          if (!nonce) { ws.close(); settle(() => reject(new Error("No nonce"))); return; }
 
           const signedAtMs = Date.now();
           const payload = buildAuthPayload({
@@ -261,16 +278,16 @@ async function sendAuthenticatedAgentRequest(params: {
         // Step 3: Agent response — success
         if (data.type === "res" && data.id === reqId) {
           clearTimeout(timeout);
+          if (data.ok) settle(() => resolve());
+          else settle(() => reject(new Error(data.error?.message ?? "Agent request failed")));
           ws.close();
-          if (data.ok) resolve();
-          else reject(new Error(data.error?.message ?? "Agent request failed"));
           return;
         }
       } catch { /* ignore parse errors */ }
     });
 
-    ws.addEventListener("error", () => { clearTimeout(timeout); reject(new Error("WebSocket error")); });
-    ws.addEventListener("close", () => { clearTimeout(timeout); reject(new Error("WebSocket closed unexpectedly")); });
+    ws.addEventListener("error", () => { clearTimeout(timeout); settle(() => reject(new Error("WebSocket error"))); });
+    ws.addEventListener("close", () => { clearTimeout(timeout); settle(() => reject(new Error("WebSocket closed unexpectedly"))); });
   });
 }
 
@@ -324,6 +341,9 @@ async function tick(): Promise<void> {
         if (broadcast) broadcast("mc.notification", { type: "deadline", count: deadlineNotified.length });
       }
     } catch {}
+
+    // 2b. Generate daily briefings (once per day after 6 AM)
+    try { maybeTriggerDailyBriefings(); } catch {}
 
     // 3. Check blocked tasks -- promote if deps are now met
     const promoted = checkBlockedTasks();

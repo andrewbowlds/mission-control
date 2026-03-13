@@ -1,4 +1,5 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { storeHandler } from "./mc-dispatch.js";
 import {
   listTasks,
   getTask,
@@ -44,6 +45,13 @@ import {
 import { listMemoryFiles, readMemoryFile, searchMemory } from "./memory-store.js";
 import { createContactActivity, listContactActivities } from "./contact-activity-store.js";
 import { fetchSmsHistory } from "./firestore-sms.js";
+import { listInbox, getInboxStats } from "./sms-inbox.js";
+import {
+  generateBriefing,
+  generateAllBriefings,
+  getLatestBriefing,
+  getBriefingHistory,
+} from "./briefing-engine.js";
 import { getContactsDb } from "./contacts-db.js";
 import {
   listTemplates,
@@ -187,9 +195,15 @@ const validCommunicationChannels: CommunicationChannel[] = ["call", "text", "ema
 const validCommunicationDirections: CommunicationDirection[] = ["inbound", "outbound"];
 
 export function registerMcMethods(api: OpenClawPluginApi): void {
+  // Wrap registerGatewayMethod to also store handlers for agent tool dispatch
+  const register: typeof api.registerGatewayMethod = (method, handler) => {
+    api.registerGatewayMethod(method, handler);
+    storeHandler(method, handler);
+  };
+
   // ── Tasks ──────────────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.tasks.list", ({ params, respond, context }) => {
+  register("mc.tasks.list", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const filter: Parameters<typeof listTasks>[0] = {};
 
@@ -211,7 +225,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { tasks: listTasks(filter) });
   });
 
-  api.registerGatewayMethod("mc.tasks.get", ({ params, respond, context }) => {
+  register("mc.tasks.get", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -220,7 +234,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { task });
   });
 
-  api.registerGatewayMethod("mc.tasks.create", ({ params, respond, context }) => {
+  register("mc.tasks.create", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const title = typeof params.title === "string" ? params.title.trim() : "";
     const agentId = typeof params.agentId === "string" ? params.agentId.trim() : "";
@@ -257,7 +271,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { task });
   });
 
-  api.registerGatewayMethod("mc.tasks.update", ({ params, respond, context }) => {
+  register("mc.tasks.update", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -286,7 +300,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { task });
   });
 
-  api.registerGatewayMethod("mc.tasks.delete", ({ params, respond, context }) => {
+  register("mc.tasks.delete", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -298,7 +312,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { deleted });
   });
 
-  api.registerGatewayMethod("mc.tasks.addUpdate", ({ params, respond, context }) => {
+  register("mc.tasks.addUpdate", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     const note = typeof params.note === "string" ? params.note.trim() : "";
@@ -346,7 +360,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { update });
   });
 
-  api.registerGatewayMethod("mc.tasks.queue", ({ params, respond, context }) => {
+  register("mc.tasks.queue", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -357,7 +371,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { task });
   });
 
-  api.registerGatewayMethod("mc.tasks.cancel", ({ params, respond, context }) => {
+  register("mc.tasks.cancel", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -369,7 +383,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { task });
   });
 
-  api.registerGatewayMethod("mc.tasks.retry", ({ params, respond, context }) => {
+  register("mc.tasks.retry", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -380,7 +394,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { task });
   });
 
-  api.registerGatewayMethod("mc.tasks.reorder", ({ params, respond, context }) => {
+  register("mc.tasks.reorder", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     const sortOrder = typeof params.sortOrder === "number" ? params.sortOrder : NaN;
@@ -390,7 +404,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { ok });
   });
 
-  api.registerGatewayMethod("mc.tasks.addDep", ({ params, respond, context }) => {
+  register("mc.tasks.addDep", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const taskId = typeof params.taskId === "string" ? params.taskId.trim() : "";
     const dependsOn = typeof params.dependsOn === "string" ? params.dependsOn.trim() : "";
@@ -403,7 +417,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { ok });
   });
 
-  api.registerGatewayMethod("mc.tasks.removeDep", ({ params, respond, context }) => {
+  register("mc.tasks.removeDep", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const taskId = typeof params.taskId === "string" ? params.taskId.trim() : "";
     const dependsOn = typeof params.dependsOn === "string" ? params.dependsOn.trim() : "";
@@ -416,14 +430,14 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { ok });
   });
 
-  api.registerGatewayMethod("mc.tasks.stats", ({ respond, context }) => {
+  register("mc.tasks.stats", ({ respond, context }) => {
     captureGatewayContext(context);
     respond(true, { stats: getTaskStats() });
   });
 
   // ── Approvals ──────────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.approvals.list", ({ params, respond, context }) => {
+  register("mc.approvals.list", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const filter: Parameters<typeof listApprovalRequests>[0] = {};
     if (typeof params.status === "string") filter.status = params.status as any;
@@ -434,7 +448,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { approvals: listApprovalRequests(filter) });
   });
 
-  api.registerGatewayMethod("mc.approvals.resolve", ({ params, respond, context }) => {
+  register("mc.approvals.resolve", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -448,19 +462,19 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { ok: true });
   });
 
-  api.registerGatewayMethod("mc.approvals.stats", ({ respond, context }) => {
+  register("mc.approvals.stats", ({ respond, context }) => {
     captureGatewayContext(context);
     respond(true, { stats: getApprovalStats() });
   });
 
   // ── Engine ─────────────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.engine.status", ({ respond, context }) => {
+  register("mc.engine.status", ({ respond, context }) => {
     captureGatewayContext(context);
     respond(true, { status: getEngineStatus() });
   });
 
-  api.registerGatewayMethod("mc.engine.config", ({ params, respond, context }) => {
+  register("mc.engine.config", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const patch: Parameters<typeof updateEngineConfig>[0] = {};
     if (typeof params.maxConcurrent === "number") patch.maxConcurrent = params.maxConcurrent;
@@ -472,11 +486,11 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Rooms ──────────────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.rooms.list", ({ respond }) => {
+  register("mc.rooms.list", ({ respond }) => {
     respond(true, { rooms: listRooms() });
   });
 
-  api.registerGatewayMethod("mc.rooms.create", ({ params, respond }) => {
+  register("mc.rooms.create", ({ params, respond }) => {
     const name = typeof params.name === "string" ? params.name.trim() : "";
     if (!name) return badRequest(respond, "name is required");
     const agentIds = Array.isArray(params.agentIds)
@@ -485,7 +499,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { room: createRoom({ name, agentIds }) });
   });
 
-  api.registerGatewayMethod("mc.rooms.update", ({ params, respond }) => {
+  register("mc.rooms.update", ({ params, respond }) => {
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
     const patch: Parameters<typeof updateRoom>[1] = {};
@@ -506,11 +520,11 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── People (CRM) ───────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.people.list", ({ respond }) => {
+  register("mc.people.list", ({ respond }) => {
     respond(true, { people: listPeople() });
   });
 
-  api.registerGatewayMethod("mc.people.get", ({ params, respond }) => {
+  register("mc.people.get", ({ params, respond }) => {
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
     const person = getPerson(id);
@@ -518,7 +532,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { person });
   });
 
-  api.registerGatewayMethod("mc.people.create", ({ params, respond }) => {
+  register("mc.people.create", ({ params, respond }) => {
     const name = typeof params.name === "string" ? params.name.trim() : "";
     if (!name) return badRequest(respond, "name is required");
     const person = createPerson({
@@ -535,7 +549,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { person });
   });
 
-  api.registerGatewayMethod("mc.people.update", ({ params, respond }) => {
+  register("mc.people.update", ({ params, respond }) => {
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
     const patch: Record<string, unknown> = {};
@@ -553,7 +567,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { person });
   });
 
-  api.registerGatewayMethod("mc.people.activities.list", ({ params, respond }) => {
+  register("mc.people.activities.list", ({ params, respond }) => {
     const personId = typeof params.personId === "string" ? params.personId.trim() : "";
     if (!personId) return badRequest(respond, "personId is required");
     const channel = typeof params.channel === "string" && validCommunicationChannels.includes(params.channel as CommunicationChannel)
@@ -575,7 +589,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { activities });
   });
 
-  api.registerGatewayMethod("mc.people.activities.create", ({ params, respond }) => {
+  register("mc.people.activities.create", ({ params, respond }) => {
     const personId = typeof params.personId === "string" ? params.personId.trim() : "";
     if (!personId) return badRequest(respond, "personId is required");
     const channel = typeof params.channel === "string" && validCommunicationChannels.includes(params.channel as CommunicationChannel)
@@ -605,7 +619,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { activity });
   });
 
-  api.registerGatewayMethod("mc.people.smsHistory", async ({ params, respond }) => {
+  register("mc.people.smsHistory", async ({ params, respond }) => {
     const personId = typeof params.personId === "string" ? params.personId.trim() : "";
     if (!personId) return badRequest(respond, "personId is required");
     const limit = typeof params.limit === "number" ? params.limit : 200;
@@ -623,7 +637,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     }
   });
 
-  api.registerGatewayMethod("mc.people.delete", ({ params, respond }) => {
+  register("mc.people.delete", ({ params, respond }) => {
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
     respond(true, { deleted: deletePerson(id) });
@@ -631,11 +645,11 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Memory ────────────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.memory.list", ({ respond }) => {
+  register("mc.memory.list", ({ respond }) => {
     respond(true, { files: listMemoryFiles() });
   });
 
-  api.registerGatewayMethod("mc.memory.read", ({ params, respond }) => {
+  register("mc.memory.read", ({ params, respond }) => {
     const file = typeof params.file === "string" ? params.file : "";
     if (!file) return badRequest(respond, "file is required");
     const content = readMemoryFile(file);
@@ -643,14 +657,14 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { file, content });
   });
 
-  api.registerGatewayMethod("mc.memory.search", ({ params, respond }) => {
+  register("mc.memory.search", ({ params, respond }) => {
     const query = typeof params.query === "string" ? params.query : "";
     respond(true, { results: searchMemory(query) });
   });
 
   // ── Cron / Calendar ───────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.cron.list", async ({ context, respond }) => {
+  register("mc.cron.list", async ({ context, respond }) => {
     captureGatewayContext(context);
     try {
       const raw = await context.cron.list({ includeDisabled: true });
@@ -685,12 +699,12 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Trello Boards ─────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.trello.boards.list", ({ respond, context }) => {
+  register("mc.trello.boards.list", ({ respond, context }) => {
     captureGatewayContext(context);
     respond(true, { boards: listBoards() });
   });
 
-  api.registerGatewayMethod("mc.trello.boards.create", ({ params, respond, context }) => {
+  register("mc.trello.boards.create", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const name = typeof params.name === "string" ? params.name.trim() : "";
     if (!name) return badRequest(respond, "name is required");
@@ -700,7 +714,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { board });
   });
 
-  api.registerGatewayMethod("mc.trello.boards.update", ({ params, respond, context }) => {
+  register("mc.trello.boards.update", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -713,7 +727,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { board });
   });
 
-  api.registerGatewayMethod("mc.trello.boards.delete", ({ params, respond, context }) => {
+  register("mc.trello.boards.delete", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -724,14 +738,14 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Trello Lists ──────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.trello.lists.list", ({ params, respond, context }) => {
+  register("mc.trello.lists.list", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const boardId = typeof params.boardId === "string" ? params.boardId : "";
     if (!boardId) return badRequest(respond, "boardId is required");
     respond(true, { lists: listLists(boardId) });
   });
 
-  api.registerGatewayMethod("mc.trello.lists.create", ({ params, respond, context }) => {
+  register("mc.trello.lists.create", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const boardId = typeof params.boardId === "string" ? params.boardId : "";
     const name = typeof params.name === "string" ? params.name.trim() : "";
@@ -742,7 +756,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { list });
   });
 
-  api.registerGatewayMethod("mc.trello.lists.update", ({ params, respond, context }) => {
+  register("mc.trello.lists.update", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -755,7 +769,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { list });
   });
 
-  api.registerGatewayMethod("mc.trello.lists.delete", ({ params, respond, context }) => {
+  register("mc.trello.lists.delete", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -766,14 +780,14 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Trello Cards ──────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.trello.cards.list", ({ params, respond, context }) => {
+  register("mc.trello.cards.list", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const boardId = typeof params.boardId === "string" ? params.boardId : "";
     if (!boardId) return badRequest(respond, "boardId is required");
     respond(true, { cards: listCards(boardId) });
   });
 
-  api.registerGatewayMethod("mc.trello.cards.create", ({ params, respond, context }) => {
+  register("mc.trello.cards.create", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const listId = typeof params.listId === "string" ? params.listId : "";
     const boardId = typeof params.boardId === "string" ? params.boardId : "";
@@ -796,7 +810,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { card });
   });
 
-  api.registerGatewayMethod("mc.trello.cards.update", ({ params, respond, context }) => {
+  register("mc.trello.cards.update", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -816,7 +830,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { card });
   });
 
-  api.registerGatewayMethod("mc.trello.cards.move", ({ params, respond, context }) => {
+  register("mc.trello.cards.move", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     const listId = typeof params.listId === "string" ? params.listId : "";
@@ -829,7 +843,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { card });
   });
 
-  api.registerGatewayMethod("mc.trello.cards.delete", ({ params, respond, context }) => {
+  register("mc.trello.cards.delete", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -840,14 +854,14 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Trello Comments ───────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.trello.cards.listComments", ({ params, respond, context }) => {
+  register("mc.trello.cards.listComments", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const cardId = typeof params.cardId === "string" ? params.cardId : "";
     if (!cardId) return badRequest(respond, "cardId is required");
     respond(true, { comments: listComments(cardId) });
   });
 
-  api.registerGatewayMethod("mc.trello.cards.addComment", ({ params, respond, context }) => {
+  register("mc.trello.cards.addComment", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const cardId = typeof params.cardId === "string" ? params.cardId : "";
     const text = typeof params.text === "string" ? params.text.trim() : "";
@@ -861,12 +875,12 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Templates ──────────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.templates.list", ({ respond, context }) => {
+  register("mc.templates.list", ({ respond, context }) => {
     captureGatewayContext(context);
     respond(true, { templates: listTemplates() });
   });
 
-  api.registerGatewayMethod("mc.templates.get", ({ params, respond, context }) => {
+  register("mc.templates.get", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -875,7 +889,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { template });
   });
 
-  api.registerGatewayMethod("mc.templates.create", ({ params, respond, context }) => {
+  register("mc.templates.create", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const name = typeof params.name === "string" ? params.name.trim() : "";
     const agentId = typeof params.agentId === "string" ? params.agentId.trim() : "";
@@ -897,7 +911,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { template });
   });
 
-  api.registerGatewayMethod("mc.templates.update", ({ params, respond, context }) => {
+  register("mc.templates.update", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -919,7 +933,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { template });
   });
 
-  api.registerGatewayMethod("mc.templates.delete", ({ params, respond, context }) => {
+  register("mc.templates.delete", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -928,7 +942,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { deleted: true });
   });
 
-  api.registerGatewayMethod("mc.templates.instantiate", ({ params, respond, context }) => {
+  register("mc.templates.instantiate", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const templateId = typeof params.templateId === "string" ? params.templateId : "";
     if (!templateId) return badRequest(respond, "templateId is required");
@@ -951,12 +965,12 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
   const validTriggerTypes: WorkflowTriggerType[] = ["manual", "cron", "event"];
   const validFailureActions: WorkflowStepFailureAction[] = ["stop", "skip", "retry"];
 
-  api.registerGatewayMethod("mc.workflows.list", ({ respond, context }) => {
+  register("mc.workflows.list", ({ respond, context }) => {
     captureGatewayContext(context);
     respond(true, { workflows: listWorkflows() });
   });
 
-  api.registerGatewayMethod("mc.workflows.get", ({ params, respond, context }) => {
+  register("mc.workflows.get", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -965,7 +979,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { workflow });
   });
 
-  api.registerGatewayMethod("mc.workflows.create", async ({ params, respond, context }) => {
+  register("mc.workflows.create", async ({ params, respond, context }) => {
     captureGatewayContext(context);
     const name = typeof params.name === "string" ? params.name.trim() : "";
     if (!name) return badRequest(respond, "name is required");
@@ -1005,7 +1019,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { workflow: result });
   });
 
-  api.registerGatewayMethod("mc.workflows.update", ({ params, respond, context }) => {
+  register("mc.workflows.update", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1021,7 +1035,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { workflow });
   });
 
-  api.registerGatewayMethod("mc.workflows.delete", async ({ params, respond, context }) => {
+  register("mc.workflows.delete", async ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1035,7 +1049,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { deleted: true });
   });
 
-  api.registerGatewayMethod("mc.workflows.addStep", ({ params, respond, context }) => {
+  register("mc.workflows.addStep", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const workflowId = typeof params.workflowId === "string" ? params.workflowId : "";
     const name = typeof params.name === "string" ? params.name.trim() : "";
@@ -1056,7 +1070,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { step });
   });
 
-  api.registerGatewayMethod("mc.workflows.updateStep", ({ params, respond, context }) => {
+  register("mc.workflows.updateStep", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const stepId = typeof params.stepId === "string" ? params.stepId : "";
     if (!stepId) return badRequest(respond, "stepId is required");
@@ -1074,7 +1088,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { step });
   });
 
-  api.registerGatewayMethod("mc.workflows.removeStep", ({ params, respond, context }) => {
+  register("mc.workflows.removeStep", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const stepId = typeof params.stepId === "string" ? params.stepId : "";
     if (!stepId) return badRequest(respond, "stepId is required");
@@ -1082,7 +1096,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { deleted: true });
   });
 
-  api.registerGatewayMethod("mc.workflows.reorderSteps", ({ params, respond, context }) => {
+  register("mc.workflows.reorderSteps", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const workflowId = typeof params.workflowId === "string" ? params.workflowId : "";
     if (!workflowId) return badRequest(respond, "workflowId is required");
@@ -1094,7 +1108,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { workflow });
   });
 
-  api.registerGatewayMethod("mc.workflows.start", ({ params, respond, context }) => {
+  register("mc.workflows.start", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const workflowId = typeof params.workflowId === "string" ? params.workflowId : "";
     if (!workflowId) return badRequest(respond, "workflowId is required");
@@ -1109,7 +1123,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Workflow Runs ──────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.workflows.runs.list", ({ params, respond, context }) => {
+  register("mc.workflows.runs.list", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const filter: { workflowId?: string; status?: string; limit?: number } = {};
     if (typeof params.workflowId === "string") filter.workflowId = params.workflowId;
@@ -1118,7 +1132,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { runs: listRuns(filter) });
   });
 
-  api.registerGatewayMethod("mc.workflows.runs.get", ({ params, respond, context }) => {
+  register("mc.workflows.runs.get", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1127,7 +1141,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { run });
   });
 
-  api.registerGatewayMethod("mc.workflows.runs.cancel", ({ params, respond, context }) => {
+  register("mc.workflows.runs.cancel", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1141,12 +1155,12 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
   const validEventTypes: AutomationEventType[] = ["task_completed", "task_failed", "cron"];
   const validActionTypes: AutomationActionType[] = ["create_task", "start_workflow", "send_message"];
 
-  api.registerGatewayMethod("mc.automations.list", ({ respond, context }) => {
+  register("mc.automations.list", ({ respond, context }) => {
     captureGatewayContext(context);
     respond(true, { rules: listRules() });
   });
 
-  api.registerGatewayMethod("mc.automations.get", ({ params, respond, context }) => {
+  register("mc.automations.get", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1155,7 +1169,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { rule });
   });
 
-  api.registerGatewayMethod("mc.automations.create", ({ params, respond, context }) => {
+  register("mc.automations.create", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const name = typeof params.name === "string" ? params.name.trim() : "";
     if (!name) return badRequest(respond, "name is required");
@@ -1175,7 +1189,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { rule });
   });
 
-  api.registerGatewayMethod("mc.automations.update", ({ params, respond, context }) => {
+  register("mc.automations.update", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1194,7 +1208,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { rule });
   });
 
-  api.registerGatewayMethod("mc.automations.delete", ({ params, respond, context }) => {
+  register("mc.automations.delete", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1205,7 +1219,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Cron Management ────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.cron.add", async ({ params, respond, context }) => {
+  register("mc.cron.add", async ({ params, respond, context }) => {
     captureGatewayContext(context);
     const name = typeof params.name === "string" ? params.name.trim() : "";
     if (!name) return badRequest(respond, "name is required");
@@ -1228,7 +1242,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     }
   });
 
-  api.registerGatewayMethod("mc.cron.update", async ({ params, respond, context }) => {
+  register("mc.cron.update", async ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1246,7 +1260,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     }
   });
 
-  api.registerGatewayMethod("mc.cron.remove", async ({ params, respond, context }) => {
+  register("mc.cron.remove", async ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1259,7 +1273,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     }
   });
 
-  api.registerGatewayMethod("mc.cron.run", async ({ params, respond, context }) => {
+  register("mc.cron.run", async ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1281,47 +1295,47 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     return from || to ? { from, to } : undefined;
   }
 
-  api.registerGatewayMethod("mc.analytics.overview", async ({ params, respond }) => {
+  register("mc.analytics.overview", async ({ params, respond }) => {
     respond(true, getOverviewMetrics(parseTimeRange(params)));
   });
 
-  api.registerGatewayMethod("mc.analytics.throughput", async ({ params, respond }) => {
+  register("mc.analytics.throughput", async ({ params, respond }) => {
     const bucketMs = typeof params.bucketMs === "number" ? params.bucketMs : undefined;
     respond(true, { buckets: getTaskThroughput(parseTimeRange(params), bucketMs) });
   });
 
-  api.registerGatewayMethod("mc.analytics.agents", async ({ params, respond }) => {
+  register("mc.analytics.agents", async ({ params, respond }) => {
     respond(true, { agents: getAgentPerformance(parseTimeRange(params)) });
   });
 
-  api.registerGatewayMethod("mc.analytics.durations", async ({ params, respond }) => {
+  register("mc.analytics.durations", async ({ params, respond }) => {
     respond(true, { buckets: getTaskDurationBreakdown(parseTimeRange(params)) });
   });
 
-  api.registerGatewayMethod("mc.analytics.priorities", async ({ params, respond }) => {
+  register("mc.analytics.priorities", async ({ params, respond }) => {
     respond(true, { priorities: getPriorityDistribution(parseTimeRange(params)) });
   });
 
-  api.registerGatewayMethod("mc.analytics.workflows", async ({ params, respond }) => {
+  register("mc.analytics.workflows", async ({ params, respond }) => {
     respond(true, { workflows: getWorkflowAnalytics(parseTimeRange(params)) });
   });
 
-  api.registerGatewayMethod("mc.analytics.sla", async ({ params, respond }) => {
+  register("mc.analytics.sla", async ({ params, respond }) => {
     respond(true, getSlaReport(parseTimeRange(params)));
   });
 
-  api.registerGatewayMethod("mc.analytics.tags", async ({ params, respond }) => {
+  register("mc.analytics.tags", async ({ params, respond }) => {
     respond(true, { tags: getTagBreakdown(parseTimeRange(params)) });
   });
 
   // ── Integrations ────────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.integrations.list", ({ respond, context }) => {
+  register("mc.integrations.list", ({ respond, context }) => {
     captureGatewayContext(context);
     respond(true, { integrations: listIntegrations() });
   });
 
-  api.registerGatewayMethod("mc.integrations.get", ({ params, respond, context }) => {
+  register("mc.integrations.get", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1330,7 +1344,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { integration });
   });
 
-  api.registerGatewayMethod("mc.integrations.delete", ({ params, respond, context }) => {
+  register("mc.integrations.delete", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1341,12 +1355,12 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Google Calendar ─────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.gcal.status", ({ respond, context }) => {
+  register("mc.gcal.status", ({ respond, context }) => {
     captureGatewayContext(context);
     respond(true, getCalendarConnectionStatus());
   });
 
-  api.registerGatewayMethod("mc.gcal.connect", ({ respond, context }) => {
+  register("mc.gcal.connect", ({ respond, context }) => {
     captureGatewayContext(context);
     try {
       const { url } = createCalendarOAuthUrl();
@@ -1356,14 +1370,14 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     }
   });
 
-  api.registerGatewayMethod("mc.gcal.disconnect", ({ respond, context }) => {
+  register("mc.gcal.disconnect", ({ respond, context }) => {
     captureGatewayContext(context);
     disconnectCalendar();
     context.broadcast("mc.gcal", { type: "disconnected" });
     respond(true, { disconnected: true });
   });
 
-  api.registerGatewayMethod("mc.gcal.sync", async ({ params, respond, context }) => {
+  register("mc.gcal.sync", async ({ params, respond, context }) => {
     captureGatewayContext(context);
     try {
       const opts: { timeMin?: string; timeMax?: string } = {};
@@ -1377,7 +1391,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     }
   });
 
-  api.registerGatewayMethod("mc.gcal.events.list", ({ params, respond, context }) => {
+  register("mc.gcal.events.list", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const opts: { from?: number; to?: number; integrationId?: string } = {};
     if (typeof params.from === "number") opts.from = params.from;
@@ -1386,7 +1400,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { events: listCalendarEvents(opts) });
   });
 
-  api.registerGatewayMethod("mc.gcal.events.create", async ({ params, respond, context }) => {
+  register("mc.gcal.events.create", async ({ params, respond, context }) => {
     captureGatewayContext(context);
     const title = typeof params.title === "string" ? params.title.trim() : "";
     if (!title) return badRequest(respond, "title is required");
@@ -1407,7 +1421,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     }
   });
 
-  api.registerGatewayMethod("mc.gcal.events.delete", async ({ params, respond, context }) => {
+  register("mc.gcal.events.delete", async ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1421,7 +1435,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     }
   });
 
-  api.registerGatewayMethod("mc.gcal.events.linkTask", ({ params, respond, context }) => {
+  register("mc.gcal.events.linkTask", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const eventId = typeof params.eventId === "string" ? params.eventId : "";
     const taskId = typeof params.taskId === "string" ? params.taskId : null;
@@ -1434,12 +1448,12 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Google Contacts ────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.gcontacts.status", ({ respond, context }) => {
+  register("mc.gcontacts.status", ({ respond, context }) => {
     captureGatewayContext(context);
     respond(true, getContactsIntegrationStatus());
   });
 
-  api.registerGatewayMethod("mc.gcontacts.connect", ({ respond, context }) => {
+  register("mc.gcontacts.connect", ({ respond, context }) => {
     captureGatewayContext(context);
     try {
       const { url } = createGoogleOAuthStartUrl();
@@ -1449,14 +1463,14 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     }
   });
 
-  api.registerGatewayMethod("mc.gcontacts.disconnect", ({ respond, context }) => {
+  register("mc.gcontacts.disconnect", ({ respond, context }) => {
     captureGatewayContext(context);
     disconnectGoogleContactsIntegration();
     context.broadcast("mc.gcontacts", { type: "disconnected" });
     respond(true, { disconnected: true });
   });
 
-  api.registerGatewayMethod("mc.gcontacts.sync", async ({ respond, context }) => {
+  register("mc.gcontacts.sync", async ({ respond, context }) => {
     captureGatewayContext(context);
     try {
       const result = await syncGoogleContactsIntegration();
@@ -1467,7 +1481,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     }
   });
 
-  api.registerGatewayMethod("mc.gcontacts.push", async ({ params, respond, context }) => {
+  register("mc.gcontacts.push", async ({ params, respond, context }) => {
     captureGatewayContext(context);
     const contactId = typeof params.contactId === "string" ? params.contactId : "";
     if (!contactId) return badRequest(respond, "contactId is required");
@@ -1482,7 +1496,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── GitHub ──────────────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.github.connect", async ({ params, respond, context }) => {
+  register("mc.github.connect", async ({ params, respond, context }) => {
     captureGatewayContext(context);
     const token = typeof params.token === "string" ? params.token.trim() : "";
     if (!token) return badRequest(respond, "token is required");
@@ -1498,14 +1512,14 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     }
   });
 
-  api.registerGatewayMethod("mc.github.disconnect", ({ respond, context }) => {
+  register("mc.github.disconnect", ({ respond, context }) => {
     captureGatewayContext(context);
     disconnectGitHub();
     context.broadcast("mc.github", { type: "disconnected" });
     respond(true, { disconnected: true });
   });
 
-  api.registerGatewayMethod("mc.github.sync", async ({ params, respond, context }) => {
+  register("mc.github.sync", async ({ params, respond, context }) => {
     captureGatewayContext(context);
     try {
       const reposResult = await syncGitHubRepos();
@@ -1519,13 +1533,13 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     }
   });
 
-  api.registerGatewayMethod("mc.github.repos.list", ({ params, respond, context }) => {
+  register("mc.github.repos.list", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const integrationId = typeof params.integrationId === "string" ? params.integrationId : undefined;
     respond(true, { repos: listRepos(integrationId) });
   });
 
-  api.registerGatewayMethod("mc.github.issues.list", ({ params, respond, context }) => {
+  register("mc.github.issues.list", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const opts: { repoId?: string; state?: string; search?: string; limit?: number } = {};
     if (typeof params.repoId === "string") opts.repoId = params.repoId;
@@ -1535,7 +1549,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { issues: listIssues(opts) });
   });
 
-  api.registerGatewayMethod("mc.github.issues.createTask", ({ params, respond, context }) => {
+  register("mc.github.issues.createTask", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const issueId = typeof params.issueId === "string" ? params.issueId : "";
     const agentId = typeof params.agentId === "string" ? params.agentId : "";
@@ -1550,7 +1564,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Intelligence: Capabilities ──────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.intelligence.capabilities.list", ({ params, respond, context }) => {
+  register("mc.intelligence.capabilities.list", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const opts: { agentId?: string; capability?: string } = {};
     if (typeof params.agentId === "string") opts.agentId = params.agentId;
@@ -1558,14 +1572,14 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { capabilities: listCapabilities(opts) });
   });
 
-  api.registerGatewayMethod("mc.intelligence.capabilities.agentProfile", ({ params, respond, context }) => {
+  register("mc.intelligence.capabilities.agentProfile", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const agentId = typeof params.agentId === "string" ? params.agentId : "";
     if (!agentId) return badRequest(respond, "agentId is required");
     respond(true, { capabilities: getAgentProfile(agentId) });
   });
 
-  api.registerGatewayMethod("mc.intelligence.capabilities.reset", ({ params, respond, context }) => {
+  register("mc.intelligence.capabilities.reset", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const agentId = typeof params.agentId === "string" ? params.agentId : "";
     if (!agentId) return badRequest(respond, "agentId is required");
@@ -1576,14 +1590,14 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Intelligence: Routing Rules ─────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.intelligence.routing.list", ({ params, respond, context }) => {
+  register("mc.intelligence.routing.list", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const opts: { enabled?: boolean } = {};
     if (typeof params.enabled === "boolean") opts.enabled = params.enabled;
     respond(true, { rules: listRoutingRules(opts) });
   });
 
-  api.registerGatewayMethod("mc.intelligence.routing.get", ({ params, respond, context }) => {
+  register("mc.intelligence.routing.get", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1592,7 +1606,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { rule });
   });
 
-  api.registerGatewayMethod("mc.intelligence.routing.create", ({ params, respond, context }) => {
+  register("mc.intelligence.routing.create", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const name = typeof params.name === "string" ? params.name : "";
     const ruleType = typeof params.ruleType === "string" ? params.ruleType as RoutingRuleType : "keyword";
@@ -1609,7 +1623,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { rule });
   });
 
-  api.registerGatewayMethod("mc.intelligence.routing.update", ({ params, respond, context }) => {
+  register("mc.intelligence.routing.update", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1627,7 +1641,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { rule });
   });
 
-  api.registerGatewayMethod("mc.intelligence.routing.delete", ({ params, respond, context }) => {
+  register("mc.intelligence.routing.delete", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1639,7 +1653,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Intelligence: Recommendations ───────────────────────────────────────
 
-  api.registerGatewayMethod("mc.intelligence.recommend", ({ params, respond, context }) => {
+  register("mc.intelligence.recommend", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const taskId = typeof params.taskId === "string" ? params.taskId : "";
     if (!taskId) return badRequest(respond, "taskId is required");
@@ -1652,7 +1666,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Notifications ─────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.notifications.list", ({ params, respond, context }) => {
+  register("mc.notifications.list", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const filter: Parameters<typeof listNotifications>[0] = {};
     if (typeof params.read === "boolean") filter.read = params.read;
@@ -1665,12 +1679,12 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { notifications: listNotifications(filter) });
   });
 
-  api.registerGatewayMethod("mc.notifications.unreadCount", ({ respond, context }) => {
+  register("mc.notifications.unreadCount", ({ respond, context }) => {
     captureGatewayContext(context);
     respond(true, { count: getUnreadCount() });
   });
 
-  api.registerGatewayMethod("mc.notifications.get", ({ params, respond, context }) => {
+  register("mc.notifications.get", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1679,7 +1693,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { notification });
   });
 
-  api.registerGatewayMethod("mc.notifications.markRead", ({ params, respond, context }) => {
+  register("mc.notifications.markRead", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1689,14 +1703,14 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { notification });
   });
 
-  api.registerGatewayMethod("mc.notifications.markAllRead", ({ respond, context }) => {
+  register("mc.notifications.markAllRead", ({ respond, context }) => {
     captureGatewayContext(context);
     const count = markAllRead();
     context.broadcast("mc.notification", { type: "all_read" });
     respond(true, { count });
   });
 
-  api.registerGatewayMethod("mc.notifications.dismiss", ({ params, respond, context }) => {
+  register("mc.notifications.dismiss", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1705,7 +1719,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { ok });
   });
 
-  api.registerGatewayMethod("mc.notifications.dismissAll", ({ respond, context }) => {
+  register("mc.notifications.dismissAll", ({ respond, context }) => {
     captureGatewayContext(context);
     const count = dismissAll();
     context.broadcast("mc.notification", { type: "all_dismissed" });
@@ -1714,7 +1728,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── Delegations ───────────────────────────────────────────────────────────
 
-  api.registerGatewayMethod("mc.delegations.list", ({ params, respond, context }) => {
+  register("mc.delegations.list", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const filter: Parameters<typeof listDelegations>[0] = {};
     if (typeof params.taskId === "string") filter.taskId = params.taskId;
@@ -1727,7 +1741,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { delegations: listDelegations(filter) });
   });
 
-  api.registerGatewayMethod("mc.delegations.get", ({ params, respond, context }) => {
+  register("mc.delegations.get", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1736,7 +1750,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { delegation });
   });
 
-  api.registerGatewayMethod("mc.delegations.request", ({ params, respond, context }) => {
+  register("mc.delegations.request", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const taskId = typeof params.taskId === "string" ? params.taskId.trim() : "";
     const fromAgentId = typeof params.fromAgentId === "string" ? params.fromAgentId.trim() : "";
@@ -1757,7 +1771,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { delegation });
   });
 
-  api.registerGatewayMethod("mc.delegations.resolve", ({ params, respond, context }) => {
+  register("mc.delegations.resolve", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1776,7 +1790,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { delegation });
   });
 
-  api.registerGatewayMethod("mc.delegations.cancel", ({ params, respond, context }) => {
+  register("mc.delegations.cancel", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const id = typeof params.id === "string" ? params.id.trim() : "";
     if (!id) return badRequest(respond, "id is required");
@@ -1786,7 +1800,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { delegation });
   });
 
-  api.registerGatewayMethod("mc.delegations.suggestions", ({ params, respond, context }) => {
+  register("mc.delegations.suggestions", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const taskId = typeof params.taskId === "string" ? params.taskId.trim() : "";
     if (!taskId) return badRequest(respond, "taskId is required");
@@ -1795,7 +1809,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { suggestions });
   });
 
-  api.registerGatewayMethod("mc.delegations.autoDelegate", ({ params, respond, context }) => {
+  register("mc.delegations.autoDelegate", ({ params, respond, context }) => {
     captureGatewayContext(context);
     const taskId = typeof params.taskId === "string" ? params.taskId.trim() : "";
     const fromAgentId = typeof params.fromAgentId === "string" ? params.fromAgentId.trim() : "";
@@ -1807,5 +1821,67 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     context.broadcast("mc.delegation", { type: "requested", delegation });
     context.broadcast("mc.notification", { type: "new" });
     respond(true, { delegation });
+  });
+
+  // ── SMS Inbox ──────────────────────────────────────────────────────────────
+
+  register("mc.sms.inbox.list", async ({ params, respond }) => {
+    try {
+      const status = typeof params.status === "string" ? params.status : undefined;
+      const agentId = typeof params.agentId === "string" ? params.agentId : undefined;
+      const limit = typeof params.limit === "number" ? params.limit : 50;
+      const messages = await listInbox({ status, agentId, limit });
+      respond(true, { messages });
+    } catch (err: any) {
+      respond(false, { error: err.message });
+    }
+  });
+
+  register("mc.sms.inbox.stats", async ({ respond }) => {
+    try {
+      const stats = await getInboxStats();
+      respond(true, { stats });
+    } catch (err: any) {
+      respond(false, { error: err.message });
+    }
+  });
+
+  // ── Briefings ──────────────────────────────────────────────────────────────
+
+  register("mc.briefing.today", ({ params, respond }) => {
+    const agentId = typeof params.agentId === "string" ? params.agentId.trim() : "";
+    if (!agentId) return badRequest(respond, "agentId is required");
+
+    let briefing = getLatestBriefing(agentId);
+    if (!briefing) {
+      // Generate on-demand for yesterday
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      briefing = generateBriefing(agentId, yesterday.toISOString().slice(0, 10));
+    }
+    respond(true, { briefing });
+  });
+
+  register("mc.briefing.history", ({ params, respond }) => {
+    const agentId = typeof params.agentId === "string" ? params.agentId.trim() : "";
+    if (!agentId) return badRequest(respond, "agentId is required");
+    const limit = typeof params.limit === "number" ? params.limit : 7;
+    respond(true, { briefings: getBriefingHistory(agentId, limit) });
+  });
+
+  register("mc.briefing.regenerate", ({ params, respond }) => {
+    const agentId = typeof params.agentId === "string" ? params.agentId.trim() : undefined;
+    const date = typeof params.date === "string" ? params.date.trim() : undefined;
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const targetDate = date ?? yesterday.toISOString().slice(0, 10);
+
+    if (agentId) {
+      const briefing = generateBriefing(agentId, targetDate);
+      respond(true, { briefings: [briefing] });
+    } else {
+      const briefings = generateAllBriefings(targetDate);
+      respond(true, { briefings });
+    }
   });
 }

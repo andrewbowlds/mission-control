@@ -447,6 +447,23 @@ function runMigrations(conn: DatabaseSync): void {
         CREATE INDEX IF NOT EXISTS idx_delegations_status ON delegations(status);
       `,
     },
+    {
+      id: "20260305_07_daily_briefings",
+      sql: `
+        CREATE TABLE IF NOT EXISTS daily_briefings (
+          id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL,
+          date TEXT NOT NULL,
+          completed_count INTEGER NOT NULL DEFAULT 0,
+          failed_count INTEGER NOT NULL DEFAULT 0,
+          pending_count INTEGER NOT NULL DEFAULT 0,
+          summary_md TEXT NOT NULL,
+          generated_at INTEGER NOT NULL,
+          UNIQUE(agent_id, date)
+        );
+        CREATE INDEX IF NOT EXISTS idx_briefings_agent_date ON daily_briefings(agent_id, date);
+      `,
+    },
   ];
 
   const hasMigration = conn.prepare("SELECT 1 FROM schema_migrations WHERE id = ?");
