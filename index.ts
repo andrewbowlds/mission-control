@@ -8,7 +8,7 @@ import {
   captureGatewayContext,
   getBroadcastFn,
 } from "./src/execution-engine.js";
-import { getTask } from "./src/task-engine.js";
+import { getTask, createTask, listTasks } from "./src/task-engine.js";
 import { findRunForTask, advanceWorkflowRun } from "./src/workflow-engine.js";
 import { evaluateEvent } from "./src/automation-engine.js";
 import { buildMissionControlContext, buildMissionControlContextCondensed } from "./src/agent-context.js";
@@ -199,7 +199,7 @@ const plugin = {
       const sessionKey = rawSessionKey.replace(/^agent:main:/, "");
 
       handleAgentEnd(sessionKey, {
-        success: event?.success ?? true,
+        success: event?.success ?? false,
         error: event?.error,
         messages: event?.messages,
       });
@@ -267,6 +267,21 @@ const plugin = {
 
       // Track session so agent_end can deliver the reply via SMS
       trackSmsSession(sessionKey, from, to);
+
+      // Create MC task for inbound SMS so all conversations are tracked
+      try {
+        const preview = body.length > 80 ? body.slice(0, 80) + "…" : body;
+        createTask({
+          title: `SMS from ${from}: ${preview}`,
+          agentId,
+          description: `Inbound SMS received.\n\n**From:** ${from}\n**To:** ${to}\n**Message:** ${body}\n\n**Session:** ${sessionKey}`,
+          priority: "normal",
+          tags: ["sms", "inbound", `from:${from}`],
+        });
+        api.logger.info(`[sms-inbox] MC task created for inbound SMS from ${from} to ${agentId}`);
+      } catch (err) {
+        api.logger.warn(`[sms-inbox] failed to create MC task for SMS: ${err}`);
+      }
 
       // Fire-and-forget: log to Firestore + auto-ack + twilioSmsLogs + media
       // logInboundSms returns null if doc already exists (dedup from dual-context hooks)
