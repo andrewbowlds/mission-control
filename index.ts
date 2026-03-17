@@ -347,6 +347,37 @@ const plugin = {
       })();
     });
 
+    // Intercept voice webhook-triggered agent sessions.
+    // Session keys for voice hooks follow the pattern: {agentId}-voice-inbound
+    // Prompt format: "📞 Inbound call from {From} (CallSid: {CallSid})"
+    api.on("before_agent_start", (event: any, ctx: any) => {
+      const sessionKey = ctx?.sessionKey ?? "";
+      if (!sessionKey.includes("-voice-inbound")) return;
+
+      const prompt = event?.prompt ?? "";
+      const voiceMatch = prompt.match(/call from ([+\d]+).*?CallSid:\s*([A-Za-z0-9]+)/);
+      if (!voiceMatch) return;
+
+      const from = voiceMatch[1];
+      const callSid = voiceMatch[2];
+      const skMatch = sessionKey.match(/([^:]+)-voice-inbound/);
+      const agentId = skMatch ? skMatch[1] : "main";
+
+      // Create MC task for inbound voice call
+      try {
+        createTask({
+          title: `Inbound call from ${from}`,
+          agentId,
+          description: `Inbound voice call received.\n\n**From:** ${from}\n**CallSid:** ${callSid}\n\n**Session:** ${sessionKey}`,
+          priority: "normal",
+          tags: ["voice", "inbound", `from:${from}`],
+        });
+        api.logger.info(`[voice-inbox] MC task created for inbound call from ${from} to ${agentId}`);
+      } catch (err) {
+        api.logger.warn(`[voice-inbox] failed to create MC task for call: ${err}`);
+      }
+    });
+
     // Register SMS retry sweep service
     const hooksToken = process.env.OPENCLAW_HOOKS_TOKEN ?? "";
     api.registerService({
