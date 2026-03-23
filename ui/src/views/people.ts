@@ -77,6 +77,7 @@ export class MCPeople extends LitElement {
 
   @state() textMessages: CommunicationActivity[] = [];
   @state() textLoading = false;
+  @state() textAgentFilter = "";
 
   static styles = css`
     :host { display: block; height: 100%; overflow: auto; padding: 20px; box-sizing: border-box }
@@ -167,9 +168,10 @@ export class MCPeople extends LitElement {
     if (!personId) return;
     this.textLoading = true;
     try {
-      type SmsMsg = { direction: string; body: string; from: string; to: string; timestamp: string; messageSid?: string; variantName?: string };
+      type SmsMsg = { direction: string; body: string; from: string; to: string; timestamp: string; messageSid?: string; variantName?: string; agent?: string };
       const res = await this.app.gw.request<{ messages: SmsMsg[] }>("mc.people.smsHistory", {
         personId,
+        agent: this.textAgentFilter || undefined,
         limit: 500,
       });
       this.textMessages = (res?.messages ?? []).map((m) => ({
@@ -179,7 +181,7 @@ export class MCPeople extends LitElement {
         direction: (m.direction === "outbound" ? "outbound" : "inbound") as ActivityDirection,
         timestamp: new Date(m.timestamp).getTime(),
         summary: m.body,
-        providerName: m.variantName || "twilio",
+        providerName: m.variantName || m.agent || "twilio",
       }));
     } catch {
       this.textMessages = [];
@@ -289,7 +291,14 @@ export class MCPeople extends LitElement {
     return html`<div class="text-section">
       <div class="text-header">
         <div class="detail-label">Text Messages</div>
-        <button @click=${() => this.loadTextMessages()}>Refresh</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select @change=${(e: any) => { this.textAgentFilter = e.target.value; void this.loadTextMessages(); }}>
+            <option value="">All agents</option>
+            <option value="pierce" ?selected=${this.textAgentFilter === "pierce"}>Pierce</option>
+            <option value="Eidith" ?selected=${this.textAgentFilter === "Eidith"}>Eidith</option>
+          </select>
+          <button @click=${() => this.loadTextMessages()}>Refresh</button>
+        </div>
       </div>
       ${this.textLoading ? html`<div class="muted">Loading...</div>` :
         this.textMessages.length === 0 ? html`<div class="chat-container"><div class="chat-empty">No text messages with this contact.</div></div>` :

@@ -623,6 +623,7 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     const personId = typeof params.personId === "string" ? params.personId.trim() : "";
     if (!personId) return badRequest(respond, "personId is required");
     const limit = typeof params.limit === "number" ? params.limit : 200;
+    const agentFilter = typeof params.agent === "string" ? params.agent.trim() : "";
 
     try {
       const db = getContactsDb();
@@ -630,7 +631,17 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
       const phones = rows.map((r) => r.value).filter(Boolean);
       if (phones.length === 0) return respond(true, { messages: [] });
 
-      const messages = await fetchSmsHistory(phones, limit);
+      let messages = await fetchSmsHistory(phones, limit);
+
+      // Filter by agent/variantName if specified
+      if (agentFilter) {
+        const filter = agentFilter.toLowerCase();
+        messages = messages.filter((m) => {
+          const agent = (m.agentId || m.variantName || "").toLowerCase();
+          return agent === filter || agent.includes(filter);
+        });
+      }
+
       respond(true, { messages });
     } catch (err) {
       respond(false, undefined, { code: "FIRESTORE_ERROR", message: err instanceof Error ? err.message : String(err) });
