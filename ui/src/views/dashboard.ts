@@ -5,7 +5,7 @@ import type { AppFacade, AgentRow, SessionRow, Task, TaskStatus, OverviewMetrics
 const AGENT_SPECIALIZATIONS: Record<string, string> = {
   main: "Primary orchestrator",
   ada: "Software engineering",
-  apollo: "Sales & lead generation",
+  lindsey: "Sales & lead generation",
   brett: "Transaction coordination",
   delta: "Research & analysis",
   echo: "Communications",

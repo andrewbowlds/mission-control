@@ -1,8 +1,8 @@
 /**
  * Mission Control agent tool — gives agents direct access to mc.* RPC methods.
  */
-import type { AnyAgentTool } from "openclaw/plugin-sdk";
-import { jsonResult } from "openclaw/plugin-sdk";
+import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
+import { jsonResult } from "openclaw/plugin-sdk/agent-runtime";
 import { callMcMethod, listMcMethods } from "./mc-dispatch.js";
 
 // Plain JSON Schema (matches what TypeBox would generate).

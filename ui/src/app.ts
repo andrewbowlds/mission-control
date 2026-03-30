@@ -49,6 +49,14 @@ export type TaskStatus =
 
 export type TaskPriority = "critical" | "high" | "normal" | "low";
 
+export type TaskUpdateMetadata = {
+  kind?: "system" | "progress" | "finding" | "blocker" | "decision" | "completion";
+  phase?: "planning" | "investigating" | "implementing" | "validating" | "reporting";
+  confidence?: "low" | "medium" | "high";
+  nextStep?: string;
+  blocker?: boolean;
+};
+
 export type TaskUpdate = {
   id: string;
   taskId: string;
@@ -56,6 +64,8 @@ export type TaskUpdate = {
   note: string;
   status?: TaskStatus;
   link?: string;
+  metadataJson?: string;
+  metadata?: TaskUpdateMetadata;
   createdAt: number;
 };
 
@@ -506,7 +516,7 @@ export type AppFacade = {
     contextJson?: string;
   }): Promise<Task | undefined>;
   updateTask(id: string, patch: Record<string, unknown>): Promise<Task | undefined>;
-  addTaskUpdate(id: string, note: string, author?: string): Promise<void>;
+  addTaskUpdate(id: string, note: string, author?: string, metadata?: TaskUpdateMetadata): Promise<void>;
   deleteTask(id: string): Promise<void>;
   queueTask(id: string): Promise<Task | undefined>;
   cancelTask(id: string, reason?: string): Promise<Task | undefined>;
@@ -1241,8 +1251,8 @@ export class McApp extends LitElement {
     return res?.task;
   }
 
-  async addTaskUpdate(id: string, note: string, author = "operator"): Promise<void> {
-    await this.gw.request("mc.tasks.addUpdate", { id, note, author }).catch(() => null);
+  async addTaskUpdate(id: string, note: string, author = "operator", metadata?: TaskUpdateMetadata): Promise<void> {
+    await this.gw.request("mc.tasks.addUpdate", { id, note, author, metadata }).catch(() => null);
   }
 
   async deleteTask(id: string): Promise<void> {
@@ -1673,7 +1683,7 @@ export class McApp extends LitElement {
       engineStatus: this.engineStatus,
       createTask: (d) => this.createTask(d),
       updateTask: (id, p) => this.updateTask(id, p),
-      addTaskUpdate: (id, note, author) => this.addTaskUpdate(id, note, author),
+      addTaskUpdate: (id, note, author, metadata) => this.addTaskUpdate(id, note, author, metadata),
       deleteTask: (id) => this.deleteTask(id),
       queueTask: (id) => this.queueTask(id),
       cancelTask: (id, reason) => this.cancelTask(id, reason),

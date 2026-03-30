@@ -15,8 +15,11 @@ import {
   completeTaskRun,
   updateTaskRunSession,
   getRunningTaskRuns,
+  getRunningTaskRunForTask,
   findTaskRunBySession,
   addTaskUpdate,
+  incrementRetryCount,
+  reconcileOpenTaskRuns,
 } from "./task-engine.js";
 import {
   createApprovalRequest,
@@ -177,8 +180,17 @@ async function dispatchTaskToAgent(task: Task): Promise<{
   runId: string;
   sessionKey: string;
 }> {
+  // Enforce single-open-run invariant: bail if a run is already active for this task.
+  const existingRun = getRunningTaskRunForTask(task.id);
+  if (existingRun) {
+    console.warn(`[mc-engine] task ${task.id} already has running run ${existingRun.id}; skipping duplicate dispatch`);
+    return { runId: existingRun.id, sessionKey: existingRun.sessionKey ?? "" };
+  }
+
   const run = createTaskRun(task.id, task.agentId);
-  const sessionKey = `${task.agentId}:mc-task-${task.id}`;
+  // Include run.id in sessionKey so each run gets a unique key — prevents
+  // agent_end from reconciling to the wrong run on retry.
+  const sessionKey = `${task.agentId}:mc-task-${task.id}:run-${run.id}`;
 
   const prompt = buildAgentPrompt(task);
   updateTaskRunSession(run.id, sessionKey);
@@ -359,7 +371,15 @@ async function tick(): Promise<void> {
       if (task) broadcastTaskEvent("status_changed", task);
     }
 
-    // 5. Check for timed-out running tasks
+    // 5. Repair any orphaned/duplicate running rows before capacity accounting.
+    const repair = reconcileOpenTaskRuns();
+    if (repair.closedTerminalRuns > 0 || repair.closedDuplicateRuns > 0) {
+      console.warn(
+        `[mc-engine] reconciled task_runs: closed ${repair.closedTerminalRuns} terminal-orphaned and ${repair.closedDuplicateRuns} duplicate running rows`,
+      );
+    }
+
+    // 6. Check for timed-out running tasks
     const runningRuns = getRunningTaskRuns();
     const now = Date.now();
     const STALE_RUN_MS = 60 * 60 * 1000; // 1 hour default stale threshold
@@ -374,8 +394,9 @@ async function tick(): Promise<void> {
       if (isTimedOut || isStale) {
         const reason = isTimedOut ? "Task execution timed out" : `Stale run (${Math.round(elapsed / 60000)}min without completion)`;
         completeTaskRun(run.id, { status: "timeout", error: reason });
-        // Retry if allowed
+        // Retry if allowed — increment retry_count so the limit is actually enforced
         if (task.retryCount < task.maxRetries) {
+          incrementRetryCount(task.id);
           const retried = transitionTask(task.id, "queued", `Retrying: ${reason}`);
           if (retried) broadcastTaskEvent("status_changed", retried);
         } else {
@@ -478,8 +499,9 @@ export function handleAgentEnd(
       if (broadcast) broadcast("mc.notification", { type: "new" });
     } catch {}
 
-    // Retry if allowed
+    // Retry if allowed — increment retry_count so the limit is actually enforced
     if (task.retryCount < task.maxRetries) {
+      incrementRetryCount(task.id);
       addTaskUpdate(task.id, { note: `Run failed: ${errorMsg}. Retrying...`, author: "system" });
       const retried = transitionTask(task.id, "queued", `Retrying after failure: ${errorMsg}`);
       if (retried) broadcastTaskEvent("status_changed", retried);

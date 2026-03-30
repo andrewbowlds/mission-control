@@ -92,7 +92,7 @@ export function seedIfEmpty(): void {
 
   const tplLeadFollowUp = createTemplate({
     name: "Lead Follow-Up",
-    agentId: "apollo",
+    agentId: "lindsey",
     description: "Follow up on a lead through the qualification pipeline: attempt contact, run BANT, assign nurture cadence or book appointment.",
     priority: "high",
     taskType: "automated",

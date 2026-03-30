@@ -1,6 +1,6 @@
 import { LitElement, css, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { AppFacade, AgentRow, Task, TaskStatus } from "../app.ts";
+import type { AppFacade, AgentRow, Task, TaskStatus, TaskUpdateMetadata } from "../app.ts";
 
 type ColumnDef = { status: TaskStatus; label: string; color: string; dotColor: string };
 
@@ -12,6 +12,24 @@ const COLUMNS: ColumnDef[] = [
   { status: "done", label: "Done", color: "#22c55e", dotColor: "#22c55e" },
   { status: "failed", label: "Failed", color: "#ef4444", dotColor: "#ef4444" },
 ];
+
+const KIND_LABELS: Record<NonNullable<TaskUpdateMetadata["kind"]>, string> = {
+  system: "System",
+  progress: "Progress",
+  finding: "Finding",
+  blocker: "Blocker",
+  decision: "Decision",
+  completion: "Completion",
+};
+
+const KIND_CLASS: Record<NonNullable<TaskUpdateMetadata["kind"]>, string> = {
+  system: "kind-system",
+  progress: "kind-progress",
+  finding: "kind-finding",
+  blocker: "kind-blocker",
+  decision: "kind-decision",
+  completion: "kind-completion",
+};
 
 @customElement("mc-tasks")
 export class McTasks extends LitElement {
@@ -54,8 +72,21 @@ export class McTasks extends LitElement {
     .btn-cancel { background: #1e1e2e; color: #94a3b8; }
     .btn-retry { background: #2a1a00; color: #f59e0b; }
     .btn-del { background: #2a0a0a; color: #ef4444; }
+    .latest-update { margin-top: 8px; padding: 8px; border-radius: 8px; background: #0f0f16; border: 1px solid #1e1e2e; }
+    .latest-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+    .latest-note { font-size: 11px; color: #cbd5e1; line-height: 1.4; }
 
-    /* Create Modal */
+    .update-kind { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 2px 8px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+    .kind-system { background: #1f2937; color: #cbd5e1; }
+    .kind-progress { background: #172554; color: #93c5fd; }
+    .kind-finding { background: #3f2a06; color: #fcd34d; }
+    .kind-blocker { background: #450a0a; color: #fca5a5; }
+    .kind-decision { background: #3b0764; color: #d8b4fe; }
+    .kind-completion { background: #052e16; color: #86efac; }
+    .phase-badge, .confidence-badge { border-radius: 999px; padding: 2px 8px; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .phase-badge { background: #111827; color: #94a3b8; }
+    .confidence-badge { background: #1e1e2e; color: #94a3b8; }
+
     .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; }
     .modal { background: #111118; border: 1px solid #1e1e2e; border-radius: 16px; padding: 24px; width: 500px; max-width: 90vw; max-height: 90vh; overflow: auto; }
     .modal h3 { font-size: 16px; font-weight: 600; color: #a78bfa; margin: 0 0 18px 0; }
@@ -67,18 +98,20 @@ export class McTasks extends LitElement {
     .check-row input[type="checkbox"] { width: auto; }
     .check-row label { font-size: 12px; color: #94a3b8; margin: 0; text-transform: none; letter-spacing: normal; }
     .form-row-inline { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+    .form-row-inline-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 14px; }
     .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
     .btn-modal-cancel { padding: 8px 16px; background: #1e1e2e; border: none; border-radius: 8px; color: #94a3b8; cursor: pointer; font-size: 13px; }
     .btn-modal-submit { padding: 8px 16px; background: #4c1d95; border: none; border-radius: 8px; color: #e9d5ff; cursor: pointer; font-size: 13px; }
 
-    /* Detail Modal */
     .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
     .detail-field label { font-size: 10px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px; display: block; }
     .detail-field .val { font-size: 13px; color: #e2e8f0; }
-    .timeline { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 300px; overflow-y: auto; }
-    .update { border: 1px solid #1e1e2e; border-radius: 8px; padding: 8px 10px; background: #0f0f16; }
-    .update-head { display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; margin-bottom: 3px; }
-    .update-note { font-size: 12px; color: #e2e8f0; line-height: 1.4; }
+    .timeline { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-height: 340px; overflow-y: auto; }
+    .update { border: 1px solid #1e1e2e; border-radius: 10px; padding: 10px 12px; background: #0f0f16; }
+    .update-head { display: flex; justify-content: space-between; gap: 8px; font-size: 10px; color: #94a3b8; margin-bottom: 6px; }
+    .update-head-left { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .update-note { font-size: 12px; color: #e2e8f0; line-height: 1.45; }
+    .update-next { margin-top: 6px; font-size: 11px; color: #93c5fd; }
     .runs { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
     .run-item { display: flex; align-items: center; gap: 8px; background: #0f0f16; border: 1px solid #1e1e2e; border-radius: 6px; padding: 6px 10px; font-size: 11px; }
     .run-status { font-weight: 600; }
@@ -88,9 +121,6 @@ export class McTasks extends LitElement {
     .note-input { display: flex; gap: 8px; margin-top: 8px; }
     .note-input input { flex: 1; }
     .note-input button { flex-shrink: 0; }
-
-    .blocked-info { display: flex; flex-direction: column; }
-    .hidden-col { display: none; }
   `;
 
   @property({ attribute: false }) app!: AppFacade;
@@ -107,6 +137,10 @@ export class McTasks extends LitElement {
   @state() private formRequiresApproval = false;
   @state() private formParentId = "";
   @state() private updateNote = "";
+  @state() private updateKind: NonNullable<TaskUpdateMetadata["kind"]> = "progress";
+  @state() private updatePhase: NonNullable<TaskUpdateMetadata["phase"]> = "investigating";
+  @state() private updateConfidence: NonNullable<TaskUpdateMetadata["confidence"]> = "medium";
+  @state() private updateNextStep = "";
 
   private agentLabel(agent: AgentRow): string {
     return `${agent.identity?.emoji ?? ""} ${agent.identity?.name ?? agent.name ?? agent.id}`.trim();
@@ -114,6 +148,11 @@ export class McTasks extends LitElement {
 
   private tasksByStatus(status: TaskStatus): Task[] {
     return this.app.tasks.filter((t) => t.status === status);
+  }
+
+  private latestUpdate(task: Task) {
+    const updates = task.updates ?? [];
+    return updates.length ? [...updates].sort((a, b) => b.createdAt - a.createdAt)[0] : null;
   }
 
   private async onSelectTask(taskId: string): Promise<void> {
@@ -142,6 +181,22 @@ export class McTasks extends LitElement {
     this.formParentId = "";
   }
 
+  private renderLatestUpdate(task: Task) {
+    const update = this.latestUpdate(task);
+    if (!update) return "";
+    const kind = update.metadata?.kind ?? "system";
+    return html`
+      <div class="latest-update">
+        <div class="latest-head">
+          <span class="update-kind ${KIND_CLASS[kind]}">${KIND_LABELS[kind]}</span>
+          ${update.metadata?.phase ? html`<span class="phase-badge">${update.metadata.phase}</span>` : ""}
+          <span class="card-sub">${new Date(update.createdAt).toLocaleTimeString()}</span>
+        </div>
+        <div class="latest-note">${update.note}</div>
+      </div>
+    `;
+  }
+
   private renderCard(task: Task) {
     const agent = this.app.agents.find((a) => a.id === task.agentId);
     const agentLbl = agent ? this.agentLabel(agent) : task.agentId;
@@ -157,6 +212,7 @@ export class McTasks extends LitElement {
         </div>
         ${childCount > 0 ? html`<div class="card-sub">${childCount} subtask${childCount > 1 ? "s" : ""}</div>` : ""}
         ${task.deadlineAt ? html`<div class="card-sub">Due: ${new Date(task.deadlineAt).toLocaleDateString()}</div>` : ""}
+        ${this.renderLatestUpdate(task)}
         <div class="card-actions" @click=${(e: Event) => e.stopPropagation()}>
           ${task.status === "pending" ? html`<button class="btn btn-queue" @click=${() => void this.app.queueTask(task.id)}>Queue</button>` : ""}
           ${task.status === "failed" ? html`<button class="btn btn-retry" @click=${() => void this.app.retryTask(task.id)}>Retry</button>` : ""}
@@ -182,8 +238,15 @@ export class McTasks extends LitElement {
 
   private async onAddNote(): Promise<void> {
     if (!this.selectedTaskId || !this.updateNote.trim()) return;
-    await this.app.addTaskUpdate(this.selectedTaskId, this.updateNote.trim());
+    await this.app.addTaskUpdate(this.selectedTaskId, this.updateNote.trim(), "operator", {
+      kind: this.updateKind,
+      phase: this.updatePhase,
+      confidence: this.updateConfidence,
+      nextStep: this.updateNextStep.trim() || undefined,
+      blocker: this.updateKind === "blocker",
+    });
     this.updateNote = "";
+    this.updateNextStep = "";
     const detail = await this.app.getTaskDetail(this.selectedTaskId);
     this.selectedTask = detail ?? null;
   }
@@ -198,7 +261,7 @@ export class McTasks extends LitElement {
 
     return html`
       <div class="backdrop" @click=${(e: Event) => { if (e.target === e.currentTarget) { this.selectedTaskId = ""; this.selectedTask = null; } }}>
-        <div class="modal" style="width: 560px;">
+        <div class="modal" style="width: 760px;">
           <h3>${task.title}</h3>
 
           <div class="detail-grid">
@@ -241,25 +304,68 @@ export class McTasks extends LitElement {
           ` : ""}
 
           <div class="form-row">
-            <label>Add Note</label>
+            <label>Add Timeline Update</label>
+            <div class="form-row-inline-3">
+              <div>
+                <label>Type</label>
+                <select .value=${this.updateKind} @change=${(e: Event) => { this.updateKind = (e.target as HTMLSelectElement).value as NonNullable<TaskUpdateMetadata["kind"]>; }}>
+                  <option value="progress">Progress</option>
+                  <option value="finding">Finding</option>
+                  <option value="blocker">Blocker</option>
+                  <option value="decision">Decision</option>
+                  <option value="completion">Completion</option>
+                  <option value="system">System</option>
+                </select>
+              </div>
+              <div>
+                <label>Phase</label>
+                <select .value=${this.updatePhase} @change=${(e: Event) => { this.updatePhase = (e.target as HTMLSelectElement).value as NonNullable<TaskUpdateMetadata["phase"]>; }}>
+                  <option value="planning">Planning</option>
+                  <option value="investigating">Investigating</option>
+                  <option value="implementing">Implementing</option>
+                  <option value="validating">Validating</option>
+                  <option value="reporting">Reporting</option>
+                </select>
+              </div>
+              <div>
+                <label>Confidence</label>
+                <select .value=${this.updateConfidence} @change=${(e: Event) => { this.updateConfidence = (e.target as HTMLSelectElement).value as NonNullable<TaskUpdateMetadata["confidence"]>; }}>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+            </div>
             <div class="note-input">
-              <input .value=${this.updateNote} @input=${(e: Event) => { this.updateNote = (e.target as HTMLInputElement).value; }} @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") void this.onAddNote(); }} placeholder="Progress note..." />
+              <input .value=${this.updateNote} @input=${(e: Event) => { this.updateNote = (e.target as HTMLInputElement).value; }} @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") void this.onAddNote(); }} placeholder="What is the agent doing, struggling with, or discovering?" />
               <button class="btn-modal-submit" style="padding:8px 12px;" @click=${() => void this.onAddNote()}>Add</button>
+            </div>
+            <div style="margin-top:8px;">
+              <input .value=${this.updateNextStep} @input=${(e: Event) => { this.updateNextStep = (e.target as HTMLInputElement).value; }} placeholder="Optional next step preview" />
             </div>
           </div>
 
           <div class="form-row">
             <label>Timeline</label>
             <div class="timeline">
-              ${updates.length ? updates.map((u) => html`
-                <div class="update">
-                  <div class="update-head">
-                    <span>${u.author}${u.status ? ` - ${u.status}` : ""}</span>
-                    <span>${new Date(u.createdAt).toLocaleString()}</span>
+              ${updates.length ? updates.map((u) => {
+                const kind = u.metadata?.kind ?? "system";
+                return html`
+                  <div class="update">
+                    <div class="update-head">
+                      <div class="update-head-left">
+                        <span>${u.author}${u.status ? ` - ${u.status}` : ""}</span>
+                        <span class="update-kind ${KIND_CLASS[kind]}">${KIND_LABELS[kind]}</span>
+                        ${u.metadata?.phase ? html`<span class="phase-badge">${u.metadata.phase}</span>` : ""}
+                        ${u.metadata?.confidence ? html`<span class="confidence-badge">${u.metadata.confidence}</span>` : ""}
+                      </div>
+                      <span>${new Date(u.createdAt).toLocaleString()}</span>
+                    </div>
+                    <div class="update-note">${u.note}</div>
+                    ${u.metadata?.nextStep ? html`<div class="update-next">Next: ${u.metadata.nextStep}</div>` : ""}
                   </div>
-                  <div class="update-note">${u.note}</div>
-                </div>
-              `) : html`<div style="font-size:12px;color:#374151;font-style:italic;">No updates yet.</div>`}
+                `;
+              }) : html`<div style="font-size:12px;color:#374151;font-style:italic;">No updates yet.</div>`}
             </div>
           </div>
 

@@ -46,6 +46,16 @@ function mapRowToTask(row: any): Task {
 }
 
 function mapRowToUpdate(row: any): TaskUpdate {
+  const metadataJson = row.metadata_json == null ? undefined : String(row.metadata_json);
+  let metadata: TaskUpdate["metadata"] | undefined;
+  if (metadataJson) {
+    try {
+      metadata = JSON.parse(metadataJson);
+    } catch {
+      metadata = undefined;
+    }
+  }
+
   return {
     id: String(row.id),
     taskId: String(row.task_id),
@@ -53,7 +63,8 @@ function mapRowToUpdate(row: any): TaskUpdate {
     note: String(row.note),
     status: row.status == null ? undefined : (String(row.status) as TaskStatus),
     link: row.link == null ? undefined : String(row.link),
-    metadataJson: row.metadata_json == null ? undefined : String(row.metadata_json),
+    metadataJson,
+    metadata,
     createdAt: Number(row.created_at),
   };
 }
@@ -309,6 +320,10 @@ export function transitionTask(id: string, newStatus: TaskStatus, note?: string)
   if (newStatus === "done" || newStatus === "failed" || newStatus === "cancelled") {
     updates.push("completed_at = ?");
     params.push(now);
+    // Reconcile: close any running task_runs so they don't become ghost slots
+    db.prepare(
+      "UPDATE task_runs SET status = 'cancelled', ended_at = ?, duration_ms = (? - started_at) WHERE task_id = ? AND status = 'running'"
+    ).run(now, now, id);
   }
 
   params.push(id);
@@ -412,10 +427,13 @@ export function addTaskUpdate(taskId: string, data: {
   status?: TaskStatus;
   link?: string;
   metadataJson?: string;
+  metadata?: TaskUpdate["metadata"];
 }): TaskUpdate {
   const db = getMcDb();
   const id = randomUUID();
   const now = Date.now();
+
+  const metadataJson = data.metadataJson ?? (data.metadata ? JSON.stringify(data.metadata) : null);
 
   db.prepare(`
     INSERT INTO task_updates (id, task_id, author, note, status, link, metadata_json, created_at)
@@ -427,7 +445,7 @@ export function addTaskUpdate(taskId: string, data: {
     data.note,
     data.status ?? null,
     data.link ?? null,
-    data.metadataJson ?? null,
+    metadataJson,
     now,
   );
 
@@ -440,7 +458,8 @@ export function addTaskUpdate(taskId: string, data: {
     note: data.note,
     status: data.status,
     link: data.link,
-    metadataJson: data.metadataJson,
+    metadataJson: metadataJson ?? undefined,
+    metadata: data.metadata,
     createdAt: now,
   };
 }
@@ -494,10 +513,109 @@ export function updateTaskRunSession(runId: string, sessionKey: string): void {
   db.prepare("UPDATE task_runs SET session_key = ? WHERE id = ?").run(sessionKey, runId);
 }
 
+export function findEquivalentOpenWatchdogTask(params: {
+  title: string;
+  agentId: string;
+  parentId?: string;
+  tags?: string[];
+}): Task | null {
+  const tags = new Set((params.tags ?? []).map((tag) => String(tag).trim()).filter(Boolean));
+  const isWatchdogIncident = tags.has("mission-control-watchdog") || tags.has("watchdog") || tags.has("incident");
+  if (!isWatchdogIncident) return null;
+
+  const db = getMcDb();
+  const rows = db.prepare(`
+    SELECT * FROM tasks
+    WHERE title = ?
+      AND agent_id = ?
+      AND status IN ('queued', 'running')
+      AND ((parent_id IS NULL AND ? IS NULL) OR parent_id = ?)
+    ORDER BY updated_at DESC
+  `).all(params.title, params.agentId, params.parentId ?? null, params.parentId ?? null) as any[];
+
+  for (const row of rows) {
+    const taskTags = new Set(row.tags_json ? JSON.parse(String(row.tags_json)) : []);
+    const sameTags = tags.size === taskTags.size && [...tags].every((tag) => taskTags.has(tag));
+    if (sameTags) return mapRowToTask(row);
+  }
+
+  return null;
+}
+
+export function reconcileOpenTaskRuns(): {
+  closedTerminalRuns: number;
+  closedDuplicateRuns: number;
+} {
+  const db = getMcDb();
+  const now = Date.now();
+
+  const closedTerminal = db.prepare(`
+    UPDATE task_runs
+    SET status = 'cancelled', ended_at = ?, duration_ms = (? - started_at)
+    WHERE status = 'running'
+      AND task_id IN (
+        SELECT id FROM tasks WHERE status IN ('done', 'failed', 'cancelled')
+      )
+  `).run(now, now) as any;
+
+  // If multiple running rows exist for the same task, keep only the newest running row.
+  const closedDuplicate = db.prepare(`
+    UPDATE task_runs
+    SET status = 'cancelled', ended_at = ?, duration_ms = (? - started_at),
+        error = COALESCE(error, 'Reconciled duplicate running row')
+    WHERE status = 'running'
+      AND id NOT IN (
+        SELECT tr.id
+        FROM task_runs tr
+        JOIN (
+          SELECT task_id, MAX(started_at) AS max_started_at
+          FROM task_runs
+          WHERE status = 'running'
+          GROUP BY task_id
+        ) latest
+          ON latest.task_id = tr.task_id
+         AND latest.max_started_at = tr.started_at
+        WHERE tr.status = 'running'
+      )
+      AND task_id IN (
+        SELECT task_id
+        FROM task_runs
+        WHERE status = 'running'
+        GROUP BY task_id
+        HAVING COUNT(*) > 1
+      )
+  `).run(now, now) as any;
+
+  return {
+    closedTerminalRuns: Number(closedTerminal.changes ?? 0),
+    closedDuplicateRuns: Number(closedDuplicate.changes ?? 0),
+  };
+}
+
 export function getRunningTaskRuns(): TaskRun[] {
   const db = getMcDb();
-  const rows = db.prepare("SELECT * FROM task_runs WHERE status = 'running'").all() as any[];
+  // Defense-in-depth: exclude runs whose parent task is already in a terminal state.
+  // transitionTask() should close these, but this JOIN guards against any gap.
+  const rows = db.prepare(`
+    SELECT tr.* FROM task_runs tr
+    JOIN tasks t ON t.id = tr.task_id
+    WHERE tr.status = 'running'
+      AND t.status NOT IN ('done', 'failed', 'cancelled')
+  `).all() as any[];
   return rows.map(mapRowToRun);
+}
+
+export function incrementRetryCount(id: string): void {
+  getMcDb().prepare("UPDATE tasks SET retry_count = retry_count + 1, updated_at = ? WHERE id = ?").run(Date.now(), id);
+}
+
+/** Returns the active (running) task_run for a given task, if any. */
+export function getRunningTaskRunForTask(taskId: string): TaskRun | null {
+  const db = getMcDb();
+  const row = db.prepare(
+    "SELECT * FROM task_runs WHERE task_id = ? AND status = 'running' LIMIT 1",
+  ).get(taskId) as any;
+  return row ? mapRowToRun(row) : null;
 }
 
 export function findTaskRunBySession(sessionKey: string): TaskRun | null {

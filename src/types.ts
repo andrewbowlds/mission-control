@@ -14,6 +14,14 @@ export type TaskPriority = "critical" | "high" | "normal" | "low";
 export type TaskType = "manual" | "automated" | "scheduled" | "triggered";
 export type ExecutionMode = "agent" | "workflow" | "human";
 
+export type TaskUpdateMetadata = {
+  kind?: "system" | "progress" | "finding" | "blocker" | "decision" | "completion";
+  phase?: "planning" | "investigating" | "implementing" | "validating" | "reporting";
+  confidence?: "low" | "medium" | "high";
+  nextStep?: string;
+  blocker?: boolean;
+};
+
 export type TaskUpdate = {
   id: string;
   taskId: string;
@@ -22,6 +30,7 @@ export type TaskUpdate = {
   status?: TaskStatus;
   link?: string;
   metadataJson?: string;
+  metadata?: TaskUpdateMetadata;
   createdAt: number;
 };
 

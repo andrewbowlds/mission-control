@@ -15,6 +15,7 @@ import {
   removeDependency,
   getTaskStats,
   transitionTask,
+  findEquivalentOpenWatchdogTask,
 } from "./task-engine.js";
 import {
   listApprovalRequests,
@@ -241,28 +242,79 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     if (!title) return badRequest(respond, "title is required");
     if (!agentId) return badRequest(respond, "agentId is required");
 
+    const description = typeof params.description === "string" ? params.description : undefined;
+    const priority = typeof params.priority === "string" && validPriorities.includes(params.priority as TaskPriority)
+      ? (params.priority as TaskPriority)
+      : "normal";
+    const parentId = typeof params.parentId === "string" ? params.parentId : undefined;
+    const taskType = typeof params.taskType === "string" && validTaskTypes.includes(params.taskType as TaskType)
+      ? (params.taskType as TaskType)
+      : "manual";
+    const executionMode = typeof params.executionMode === "string" && validExecModes.includes(params.executionMode as ExecutionMode)
+      ? (params.executionMode as ExecutionMode)
+      : "agent";
+    const requiresApproval = typeof params.requiresApproval === "boolean" ? params.requiresApproval : false;
+    const scheduledAt = typeof params.scheduledAt === "number" ? params.scheduledAt : undefined;
+    const deadlineAt = typeof params.deadlineAt === "number" ? params.deadlineAt : undefined;
+    const timeoutMs = typeof params.timeoutMs === "number" ? params.timeoutMs : undefined;
+    const maxRetries = typeof params.maxRetries === "number" ? params.maxRetries : undefined;
+    const tags = Array.isArray(params.tags) ? params.tags.filter((t): t is string => typeof t === "string") : undefined;
+    const contextJson = typeof params.contextJson === "string" ? params.contextJson : undefined;
+    const dependencies = Array.isArray(params.dependencies) ? params.dependencies.filter((d): d is string => typeof d === "string") : undefined;
+
+    const existingWatchdogTask = findEquivalentOpenWatchdogTask({
+      title,
+      agentId,
+      parentId,
+      tags,
+    });
+    if (existingWatchdogTask) {
+      const refreshed = updateTask(existingWatchdogTask.id, {
+        description,
+        priority,
+        tags,
+        contextJson,
+        deadlineAt,
+        timeoutMs,
+        maxRetries,
+        requiresApproval,
+        executionMode,
+      }) ?? existingWatchdogTask;
+
+      addTaskUpdate(existingWatchdogTask.id, {
+        author: "system",
+        note: "Equivalent watchdog incident re-detected; refreshed existing queued/running incident instead of creating a duplicate",
+        metadata: {
+          kind: "finding",
+          phase: "investigating",
+          confidence: "high",
+          nextStep: "Continue tracking this incident on the existing task",
+        },
+      });
+
+      const latestTask = getTask(existingWatchdogTask.id) ?? refreshed;
+      context.broadcast("mc.task", { type: "updated", task: latestTask });
+      broadcastEngineStatus();
+      respond(true, { task: latestTask, deduped: true, dedupedTaskId: latestTask.id });
+      return;
+    }
+
     const task = createTask({
       title,
       agentId,
-      description: typeof params.description === "string" ? params.description : undefined,
-      priority: typeof params.priority === "string" && validPriorities.includes(params.priority as TaskPriority)
-        ? (params.priority as TaskPriority)
-        : "normal",
-      parentId: typeof params.parentId === "string" ? params.parentId : undefined,
-      taskType: typeof params.taskType === "string" && validTaskTypes.includes(params.taskType as TaskType)
-        ? (params.taskType as TaskType)
-        : "manual",
-      executionMode: typeof params.executionMode === "string" && validExecModes.includes(params.executionMode as ExecutionMode)
-        ? (params.executionMode as ExecutionMode)
-        : "agent",
-      requiresApproval: typeof params.requiresApproval === "boolean" ? params.requiresApproval : false,
-      scheduledAt: typeof params.scheduledAt === "number" ? params.scheduledAt : undefined,
-      deadlineAt: typeof params.deadlineAt === "number" ? params.deadlineAt : undefined,
-      timeoutMs: typeof params.timeoutMs === "number" ? params.timeoutMs : undefined,
-      maxRetries: typeof params.maxRetries === "number" ? params.maxRetries : undefined,
-      tags: Array.isArray(params.tags) ? params.tags.filter((t): t is string => typeof t === "string") : undefined,
-      contextJson: typeof params.contextJson === "string" ? params.contextJson : undefined,
-      dependencies: Array.isArray(params.dependencies) ? params.dependencies.filter((d): d is string => typeof d === "string") : undefined,
+      description,
+      priority,
+      parentId,
+      taskType,
+      executionMode,
+      requiresApproval,
+      scheduledAt,
+      deadlineAt,
+      timeoutMs,
+      maxRetries,
+      tags,
+      contextJson,
+      dependencies,
     });
 
     // Broadcast the new task
@@ -326,6 +378,15 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
         ? (params.status as TaskStatus)
         : undefined,
       link: typeof params.link === "string" ? params.link : undefined,
+      metadata: params.metadata && typeof params.metadata === "object"
+        ? {
+            kind: typeof (params.metadata as any).kind === "string" ? (params.metadata as any).kind : undefined,
+            phase: typeof (params.metadata as any).phase === "string" ? (params.metadata as any).phase : undefined,
+            confidence: typeof (params.metadata as any).confidence === "string" ? (params.metadata as any).confidence : undefined,
+            nextStep: typeof (params.metadata as any).nextStep === "string" ? (params.metadata as any).nextStep : undefined,
+            blocker: typeof (params.metadata as any).blocker === "boolean" ? (params.metadata as any).blocker : undefined,
+          }
+        : undefined,
     });
 
     const outreach = params.outreach && typeof params.outreach === "object" ? params.outreach as Record<string, unknown> : null;
