@@ -34,7 +34,7 @@ import {
 } from "./src/sms-inbox.js";
 import type { MediaItem } from "./src/sms-inbox.js";
 import { startRetryService, stopRetryService } from "./src/sms-retry-service.js";
-import { setOmiRuntime, setOmiLogger } from "./src/omi-integration.js";
+import { setOmiRuntime, setOmiLogger, startOmiMemoryCache } from "./src/omi-integration.js";
 
 // ---------------------------------------------------------------------------
 // Twilio payload cache reader (populated by sms-payload-cache.mjs transform)
@@ -118,6 +118,7 @@ const plugin = {
 
     // Initialize Omi wearable integration
     setOmiRuntime(api.runtime);
+    startOmiMemoryCache();
     setOmiLogger({
       info: (msg: string) => api.logger.info(msg),
       warn: (msg: string) => api.logger.warn(msg),

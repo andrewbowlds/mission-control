@@ -9,6 +9,7 @@
 import { getEngineStatus } from "./execution-engine.js";
 import { listTasks } from "./task-engine.js";
 import { getBriefingContext } from "./briefing-engine.js";
+import { getOmiMemoriesContext } from "./omi-integration.js";
 
 function buildStatusSummary(): string {
   try {
@@ -33,6 +34,16 @@ function buildStatusSummary(): string {
     return parts.join("\n");
   } catch {
     return "Engine status unavailable";
+  }
+}
+
+function buildOmiSection(): string {
+  try {
+    const memories = getOmiMemoriesContext();
+    if (!memories) return "";
+    return `\n## Omi Memories (what Andrew has been saying/doing)\n${memories}`;
+  } catch {
+    return "";
   }
 }
 
@@ -174,6 +185,12 @@ Multi-agent collaboration:
 - \`mc.briefing.today\` — Get your daily briefing. Params: { agentId?: string }
 - \`mc.briefing.history\` — Past briefings. Params: { agentId: string, limit?: number }
 - \`mc.briefing.regenerate\` — Force regenerate. Params: { agentId?: string, date?: string }
-${agentId ? buildBriefingSection(agentId) : ""}
+
+## Omi Wearable (mc.omi.*)
+Andrew wears an Omi AI device that captures conversations and extracts memories throughout the day.
+- \`mc.omi.listSpeakers\` — List known speaker → CRM contact mappings. No params.
+- \`mc.omi.saveSpeaker\` — Map a speaker ID to a CRM contact. Params: { omiSpeakerId: number, personId: string, personName: string }
+- \`mc.omi.createMemory\` — Write a new memory to omi. Params: { content: string, category?: string }
+${agentId ? buildBriefingSection(agentId) : ""}${buildOmiSection()}
 </mission-control>`;
 }

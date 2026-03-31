@@ -464,6 +464,71 @@ export async function handleOmiDaySummary(summary: OmiDaySummary): Promise<void>
   }
 }
 
+// ── Omi memory cache ─────────────────────────────────────────────────────────
+// Fetched from omi MCP API and refreshed every 5 minutes so agent context
+// injection stays synchronous.
+
+interface OmiMemory {
+  id: string;
+  content: string;
+  category: string;
+}
+
+let memoryCacheContext = "";
+let memoryCacheTs = 0;
+const MEMORY_CACHE_TTL = 5 * 60 * 1000;
+
+async function fetchOmiMemories(): Promise<OmiMemory[]> {
+  const key = process.env.OMI_MCP_KEY;
+  if (!key) return [];
+  const res = await fetch("https://api.omi.me/v1/mcp/memories", {
+    headers: { Authorization: `Bearer ${key}` },
+  });
+  if (!res.ok) throw new Error(`omi memories ${res.status}`);
+  return res.json() as Promise<OmiMemory[]>;
+}
+
+function refreshMemoryCache(): void {
+  fetchOmiMemories()
+    .then(memories => {
+      if (!memories.length) { memoryCacheContext = ""; return; }
+      memoryCacheContext = memories
+        .map(m => `- [${m.category}] ${m.content}`)
+        .join("\n");
+      memoryCacheTs = Date.now();
+      log.info(`[omi] memory cache refreshed (${memories.length} memories)`);
+    })
+    .catch(err => log.warn(`[omi] memory cache refresh failed: ${err}`));
+}
+
+/** Start background memory cache refresh. Called once from index.ts. */
+export function startOmiMemoryCache(): void {
+  refreshMemoryCache();
+  setInterval(refreshMemoryCache, MEMORY_CACHE_TTL).unref();
+}
+
+/** Returns pre-formatted omi memory context string for agent prompt injection. */
+export function getOmiMemoriesContext(): string {
+  return memoryCacheContext;
+}
+
+/** Write a new memory to omi via MCP API. */
+export async function createOmiMemory(content: string, category = "system"): Promise<string> {
+  const key = process.env.OMI_MCP_KEY;
+  if (!key) throw new Error("OMI_MCP_KEY not set");
+  const res = await fetch("https://api.omi.me/v1/mcp/memories", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ content, category }),
+  });
+  if (!res.ok) throw new Error(`omi create memory ${res.status}`);
+  const data = await res.json() as { id: string };
+  // Invalidate cache so next context build picks it up
+  memoryCacheTs = 0;
+  refreshMemoryCache();
+  return data.id;
+}
+
 // ── audio_bytes handler ───────────────────────────────────────────────────────
 // Omi sends raw audio chunks every N seconds (configured in app).
 // We buffer them to disk per uid so they can be used for voice fingerprinting

@@ -288,7 +288,16 @@ function handleOmiWebhook(req: IncomingMessage, res: ServerResponse, rawUrl: str
         : pathname.endsWith("/audio") ? "audio"
         : null;
 
-      if (route === "audio") {
+      if (route === "memories") {
+        // Proxy GET → omi MCP API (avoids browser CORS)
+        const key = process.env.OMI_MCP_KEY ?? "";
+        if (!key) { sendJson(res, 503, { error: "OMI_MCP_KEY not configured" }); return; }
+        const apiRes = await fetch("https://api.omi.me/v1/mcp/memories", {
+          headers: { Authorization: `Bearer ${key}` },
+        });
+        const data = await apiRes.json();
+        sendJson(res, apiRes.ok ? 200 : apiRes.status, data);
+      } else if (route === "audio") {
         // Binary body — read before responding
         const reqUrl = new URL(rawUrl, "http://localhost");
         const uid = reqUrl.searchParams.get("uid") ?? "unknown";

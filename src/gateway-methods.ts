@@ -1965,6 +1965,17 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     );
   });
 
+  register("mc.omi.createMemory", ({ params, respond }) => {
+    const content = typeof params.content === "string" ? params.content.trim() : "";
+    const category = typeof params.category === "string" ? params.category.trim() : "system";
+    if (!content) { respond(false, null, new Error("content is required")); return; }
+    void import("./omi-integration.js").then(({ createOmiMemory }) =>
+      createOmiMemory(content, category)
+        .then((id) => respond(true, { id }))
+        .catch((err: unknown) => respond(false, null, err instanceof Error ? err : new Error(String(err))))
+    );
+  });
+
   register("mc.briefing.regenerate", ({ params, respond }) => {
     const agentId = typeof params.agentId === "string" ? params.agentId.trim() : undefined;
     const date = typeof params.date === "string" ? params.date.trim() : undefined;
