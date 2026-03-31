@@ -19,7 +19,18 @@ import "./views/omi.ts";
 
 declare global {
   interface Window {
-    __mcBootstrap?: { gatewayUrl?: string; basePath?: string; initialToken?: string };
+    __mcBootstrap?: {
+      gatewayUrl?: string;
+      basePath?: string;
+      initialToken?: string;
+      user?: {
+        uid: string;
+        email: string;
+        name: string;
+        roles: Record<string, boolean | string>;
+        gatewayConnected: boolean;
+      };
+    };
   }
 }
 
@@ -830,7 +841,9 @@ export class McApp extends LitElement {
   @state() private unreadCount = 0;
   @state() private notificationsOpen = false;
   @state() private delegations: MCDelegation[] = [];
-  @state() private showingTokenInput = false;
+  @state() private showingGatewayPanel = false;
+  @state() private gwPanelSaving = false;
+  @state() private gwPanelError = "";
 
   private gw!: MCGatewayClient;
 
@@ -843,22 +856,37 @@ export class McApp extends LitElement {
     }
   }
 
-  private toggleTokenInput(): void {
-    this.showingTokenInput = !this.showingTokenInput;
+  private async saveGatewayConnection(gatewayUrl: string, token: string, instanceName: string): Promise<void> {
+    this.gwPanelSaving = true;
+    this.gwPanelError = "";
+    try {
+      const res = await fetch("/api/user/gateway", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gatewayUrl, token, instanceName }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? "Save failed");
+      }
+      // Also update localStorage for immediate use before reload
+      try {
+        if (token) localStorage.setItem(MC_GATEWAY_TOKEN_KEY, token);
+        else localStorage.removeItem(MC_GATEWAY_TOKEN_KEY);
+      } catch { /* ignore */ }
+      // Reload to re-bootstrap with new gateway config
+      window.location.reload();
+    } catch (e) {
+      this.gwPanelError = (e as Error).message;
+      this.gwPanelSaving = false;
+    }
   }
 
-  private saveManualToken(token: string): void {
-    const trimmed = token.trim();
-    try {
-      if (trimmed) localStorage.setItem(MC_GATEWAY_TOKEN_KEY, trimmed);
-      else localStorage.removeItem(MC_GATEWAY_TOKEN_KEY);
-    } catch {
-      // ignore storage write failures
-    }
-    this.gw.setManualToken(trimmed || null);
-    this.gw.stop();
-    this.gw.start();
-    this.showingTokenInput = false;
+  private async disconnectGateway(): Promise<void> {
+    if (!confirm("Disconnect your openclaw gateway?")) return;
+    await fetch("/api/user/gateway", { method: "DELETE" });
+    try { localStorage.removeItem(MC_GATEWAY_TOKEN_KEY); } catch { /* ignore */ }
+    window.location.reload();
   }
 
   connectedCallback() {
@@ -1815,6 +1843,99 @@ export class McApp extends LitElement {
     return `${Math.floor(diff / 86400000)}d ago`;
   }
 
+  private renderGatewayPanel() {
+    const bootstrap = window.__mcBootstrap;
+    const currentUrl = bootstrap?.gatewayUrl || "";
+    const user = bootstrap?.user;
+    const isConnected = !!user?.gatewayConnected;
+
+    return html`
+      <div style="position:fixed; bottom:40px; right:16px; background:#111118; padding:20px; border:1px solid #a78bfa; border-radius:12px; z-index:1000; box-shadow:0 8px 32px rgba(0,0,0,0.6); width:340px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <div style="font-size:13px; font-weight:700; color:#e2e8f0;">Gateway Connection</div>
+          <button @click=${() => { this.showingGatewayPanel = false; }} style="background:none; border:none; color:#64748b; cursor:pointer; font-size:16px; line-height:1;">✕</button>
+        </div>
+
+        ${user ? html`
+          <div style="font-size:11px; color:#64748b; margin-bottom:14px;">
+            Signed in as <span style="color:#a78bfa;">${user.email}</span>
+            ${user.roles?.isAdmin ? html`<span style="background:#1e293b; color:#a78bfa; font-size:10px; padding:1px 6px; border-radius:4px; margin-left:6px;">Admin</span>` : ""}
+            · <a href="/auth/logout" style="color:#64748b; text-decoration:none; font-size:11px;">Sign out</a>
+          </div>
+        ` : ""}
+
+        ${isConnected ? html`
+          <div style="background:#0a2010; border:1px solid #1a5c2a; border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px;">
+            <div style="color:#4ade80; font-weight:600; margin-bottom:4px;">✓ Connected</div>
+            <div style="color:#64748b; word-break:break-all;">${currentUrl}</div>
+          </div>
+        ` : html`
+          <div style="background:#1a1a2e; border:1px solid #2d2d3f; border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:#64748b;">
+            Not connected — paste your openclaw gateway URL and token below.
+          </div>
+        `}
+
+        <div style="margin-bottom:10px;">
+          <label style="display:block; font-size:10px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:.06em; margin-bottom:5px;">Gateway URL</label>
+          <input
+            id="gw-url-input"
+            type="text"
+            placeholder="wss://gateway.yourdomain.com/ws"
+            .value=${currentUrl}
+            style="width:100%; background:#0a0a0f; border:1px solid #374151; color:#e2e8f0; padding:7px 10px; border-radius:6px; font-size:12px; font-family:monospace;"
+          />
+        </div>
+
+        <div style="margin-bottom:10px;">
+          <label style="display:block; font-size:10px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:.06em; margin-bottom:5px;">Token</label>
+          <input
+            id="gw-token-input"
+            type="password"
+            placeholder="Paste openclaw gateway token..."
+            style="width:100%; background:#0a0a0f; border:1px solid #374151; color:#e2e8f0; padding:7px 10px; border-radius:6px; font-size:12px; font-family:monospace;"
+          />
+        </div>
+
+        <div style="margin-bottom:10px;">
+          <label style="display:block; font-size:10px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:.06em; margin-bottom:5px;">Instance Name (optional)</label>
+          <input
+            id="gw-name-input"
+            type="text"
+            placeholder="e.g. Lisa's openclaw"
+            style="width:100%; background:#0a0a0f; border:1px solid #374151; color:#e2e8f0; padding:7px 10px; border-radius:6px; font-size:12px;"
+          />
+        </div>
+
+        ${this.gwPanelError ? html`<div style="background:#3f1a1a; border:1px solid #7f1d1d; border-radius:6px; padding:8px 10px; font-size:11px; color:#fca5a5; margin-bottom:10px;">${this.gwPanelError}</div>` : ""}
+
+        <div style="display:flex; gap:8px;">
+          <button
+            style="flex:1; background:#a78bfa; color:#000; border:none; border-radius:6px; font-size:12px; font-weight:700; padding:8px; cursor:pointer; opacity:${this.gwPanelSaving ? "0.5" : "1"};"
+            ?disabled=${this.gwPanelSaving}
+            @click=${() => {
+              const urlEl = this.shadowRoot?.getElementById("gw-url-input") as HTMLInputElement;
+              const tokEl = this.shadowRoot?.getElementById("gw-token-input") as HTMLInputElement;
+              const nameEl = this.shadowRoot?.getElementById("gw-name-input") as HTMLInputElement;
+              void this.saveGatewayConnection(urlEl?.value || "", tokEl?.value || "", nameEl?.value || "");
+            }}
+          >${this.gwPanelSaving ? "Saving…" : "Save & Connect"}</button>
+          ${isConnected ? html`
+            <button
+              style="background:#1e1e2e; border:1px solid #7f1d1d; color:#fca5a5; border-radius:6px; font-size:11px; padding:8px 12px; cursor:pointer;"
+              @click=${() => void this.disconnectGateway()}
+            >Disconnect</button>
+          ` : ""}
+        </div>
+
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid #1e1e2e; font-size:10px; color:#475569; line-height:1.5;">
+          <strong style="color:#64748b;">ACP (server-to-server):</strong><br/>
+          Run on your openclaw server:<br/>
+          <code style="color:#a78bfa; font-size:10px;">openclaw acp --url wss://gateway.edprealty.com/ws --token &lt;token&gt;</code>
+        </div>
+      </div>
+    `;
+  }
+
   private renderNotificationPanel() {
     return html`
       <div class="notif-panel">
@@ -1850,9 +1971,14 @@ export class McApp extends LitElement {
     return this.tasks.filter((t) => !["done", "cancelled"].includes(t.status)).length;
   }
 
+  private get isAdmin(): boolean {
+    return !!(window.__mcBootstrap?.user?.roles?.isAdmin);
+  }
+
   render() {
     const facade = this.buildFacade();
     const pendingCount = this.pendingApprovalCount;
+    const isAdmin = this.isAdmin;
     return html`
       <div class="sidebar">
         <span class="brand">Mission Control</span>
@@ -1869,18 +1995,6 @@ export class McApp extends LitElement {
           @click=${() => { this.tab = "approvals"; }}
         >Approvals${pendingCount > 0 ? html`<span class="badge">${pendingCount}</span>` : ""}</button>
         <button
-          class="nav-tab ${this.tab === "workflows" ? "active" : ""}"
-          @click=${() => { this.tab = "workflows"; }}
-        >Workflows</button>
-        <button
-          class="nav-tab ${this.tab === "automations" ? "active" : ""}"
-          @click=${() => { this.tab = "automations"; }}
-        >Automations</button>
-        <button
-          class="nav-tab ${this.tab === "analytics" ? "active" : ""}"
-          @click=${() => { this.tab = "analytics"; void this.loadAnalytics(); }}
-        >Analytics</button>
-        <button
           class="nav-tab ${this.tab === "chat" ? "active" : ""}"
           @click=${() => { this.tab = "chat"; }}
         >Chat</button>
@@ -1889,33 +2003,48 @@ export class McApp extends LitElement {
           @click=${() => { this.tab = "people"; }}
         >People</button>
         <button
-          class="nav-tab ${this.tab === "memory" ? "active" : ""}"
-          @click=${() => { this.tab = "memory"; }}
-        >Memory</button>
-        <button
           class="nav-tab ${this.tab === "calendar" ? "active" : ""}"
           @click=${() => { this.tab = "calendar"; }}
         >Calendar</button>
         <button
-          class="nav-tab ${this.tab === "team" ? "active" : ""}"
-          @click=${() => { this.tab = "team"; }}
-        >Team</button>
-        <button
-          class="nav-tab ${this.tab === "integrations" ? "active" : ""}"
-          @click=${() => { this.tab = "integrations"; }}
-        >Integrations</button>
-        <button
-          class="nav-tab ${this.tab === "live-logs" ? "active" : ""}"
-          @click=${() => { this.tab = "live-logs"; }}
-        >Live Logs</button>
-        <button
-          class="nav-tab ${this.tab === "trello" ? "active" : ""}"
-          @click=${() => { this.tab = "trello"; }}
-        >Trello</button>
-        <button
           class="nav-tab ${this.tab === "omi" ? "active" : ""}"
           @click=${() => { this.tab = "omi"; }}
         >Omi</button>
+        ${isAdmin ? html`
+          <div style="height:1px; background:#1e1e2e; margin:6px 8px;"></div>
+          <button
+            class="nav-tab ${this.tab === "workflows" ? "active" : ""}"
+            @click=${() => { this.tab = "workflows"; }}
+          >Workflows</button>
+          <button
+            class="nav-tab ${this.tab === "automations" ? "active" : ""}"
+            @click=${() => { this.tab = "automations"; }}
+          >Automations</button>
+          <button
+            class="nav-tab ${this.tab === "analytics" ? "active" : ""}"
+            @click=${() => { this.tab = "analytics"; void this.loadAnalytics(); }}
+          >Analytics</button>
+          <button
+            class="nav-tab ${this.tab === "memory" ? "active" : ""}"
+            @click=${() => { this.tab = "memory"; }}
+          >Memory</button>
+          <button
+            class="nav-tab ${this.tab === "team" ? "active" : ""}"
+            @click=${() => { this.tab = "team"; }}
+          >Team</button>
+          <button
+            class="nav-tab ${this.tab === "integrations" ? "active" : ""}"
+            @click=${() => { this.tab = "integrations"; }}
+          >Integrations</button>
+          <button
+            class="nav-tab ${this.tab === "live-logs" ? "active" : ""}"
+            @click=${() => { this.tab = "live-logs"; }}
+          >Live Logs</button>
+          <button
+            class="nav-tab ${this.tab === "trello" ? "active" : ""}"
+            @click=${() => { this.tab = "trello"; }}
+          >Trello</button>
+        ` : ""}
         <div class="bell-wrap">
           <button class="bell-btn" @click=${() => this.toggleNotifications()}>
             &#128276;
@@ -1924,28 +2053,10 @@ export class McApp extends LitElement {
           ${this.notificationsOpen ? this.renderNotificationPanel() : ""}
         </div>
         <div class="status">
-          <button class="nav-tab" style="padding:4px 14px;" @click=${() => this.toggleTokenInput()}>
-            Token
+          <button class="nav-tab" style="padding:4px 10px;" @click=${() => { this.showingGatewayPanel = !this.showingGatewayPanel; this.gwPanelError = ""; }}>
+            ⚡ Gateway
           </button>
-          ${this.showingTokenInput ? html`
-            <div style="position:fixed; bottom:40px; left:180px; background:#1e1e2e; padding:12px; border:1px solid #a78bfa; border-radius:8px; z-index:1000; box-shadow:0 8px 32px rgba(0,0,0,0.5); display:flex; gap:8px;">
-              <input 
-                type="password" 
-                id="manual-token-input"
-                placeholder="Paste gateway token..." 
-                .value=${this.getSavedManualToken() || ""}
-                style="background:#0a0a0f; border:1px solid #374151; color:#fff; padding:4px 8px; border-radius:4px; font-size:12px; width:200px;"
-                @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') this.saveManualToken((e.target as HTMLInputElement).value); }}
-              >
-              <button 
-                style="background:#a78bfa; color:#000; border:none; padding:4px 8px; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer;"
-                @click=${() => {
-          const val = (this.shadowRoot?.getElementById('manual-token-input') as HTMLInputElement)?.value;
-          this.saveManualToken(val || "");
-        }}
-              >Set</button>
-            </div>
-          ` : ""}
+          ${this.showingGatewayPanel ? this.renderGatewayPanel() : ""}
           <div class="dot ${this.gwStatus}"></div>
           ${this.gwStatus === "connected" ? "Live" : this.gwStatus === "connecting" ? "Connecting..." : "Offline"}
         </div>
