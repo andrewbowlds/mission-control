@@ -15,6 +15,7 @@ import "./views/automations.ts";
 import "./views/analytics.ts";
 import "./views/integrations.ts";
 import "./views/live-logs.ts";
+import "./views/omi.ts";
 
 declare global {
   interface Window {
@@ -485,13 +486,14 @@ export type MCDelegation = {
   resolvedAt?: number;
 };
 
-type Tab = "dashboard" | "tasks" | "approvals" | "chat" | "people" | "memory" | "calendar" | "team" | "trello" | "workflows" | "automations" | "analytics" | "integrations" | "live-logs";
+type Tab = "dashboard" | "tasks" | "approvals" | "chat" | "people" | "memory" | "calendar" | "team" | "trello" | "workflows" | "automations" | "analytics" | "integrations" | "live-logs" | "omi";
 
 const MC_GATEWAY_TOKEN_KEY = "mc.gateway.token.v1";
 
 /** App facade passed down to views */
 export type AppFacade = {
   gw: MCGatewayClient;
+  omiMcpKey?: string;
   agents: AgentRow[];
   sessions: SessionRow[];
   subagents: any[];
@@ -1670,6 +1672,7 @@ export class McApp extends LitElement {
   private buildFacade(): AppFacade {
     return {
       gw: this.gw,
+      omiMcpKey: (window as any).__mcBootstrap?.omiMcpKey,
       agents: this.agents,
       sessions: this.sessions,
       subagents: this.subagents,
@@ -1911,6 +1914,10 @@ export class McApp extends LitElement {
           class="nav-tab ${this.tab === "trello" ? "active" : ""}"
           @click=${() => { this.tab = "trello"; }}
         >Trello</button>
+        <button
+          class="nav-tab ${this.tab === "omi" ? "active" : ""}"
+          @click=${() => { this.tab = "omi"; }}
+        >Omi</button>
         <div class="bell-wrap">
           <button class="bell-btn" @click=${() => this.toggleNotifications()}>
             &#128276;
@@ -1960,6 +1967,7 @@ export class McApp extends LitElement {
         ${this.tab === "analytics" ? html`<mc-analytics .app=${facade}></mc-analytics>` : ""}
         ${this.tab === "integrations" ? html`<mc-integrations .app=${facade}></mc-integrations>` : ""}
         ${this.tab === "live-logs" ? html`<mc-live-logs .client=${facade.gw}></mc-live-logs>` : ""}
+        ${this.tab === "omi" ? html`<mc-omi .app=${facade}></mc-omi>` : ""}
       </div>
     `;
   }

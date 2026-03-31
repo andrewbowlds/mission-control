@@ -1941,6 +1941,30 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { briefings: getBriefingHistory(agentId, limit) });
   });
 
+  // ── Omi ──────────────────────────────────────────────────────────────────────
+  register("mc.omi.saveSpeaker", ({ params, respond }) => {
+    const omiSpeakerId = typeof params.omiSpeakerId === "number" ? params.omiSpeakerId : Number(params.omiSpeakerId);
+    const personId = typeof params.personId === "string" ? params.personId.trim() : "";
+    const personName = typeof params.personName === "string" ? params.personName.trim() : "";
+    if (isNaN(omiSpeakerId) || !personId || !personName) {
+      respond(false, null, new Error("omiSpeakerId (number), personId, and personName are required"));
+      return;
+    }
+    void import("./omi-integration.js").then(({ saveSpeakerMapping }) =>
+      saveSpeakerMapping(omiSpeakerId, personId, personName)
+        .then(() => respond(true, { ok: true }))
+        .catch((err: unknown) => respond(false, null, err instanceof Error ? err : new Error(String(err))))
+    );
+  });
+
+  register("mc.omi.listSpeakers", ({ respond }) => {
+    void import("./omi-integration.js").then(({ listSpeakerMappings }) =>
+      listSpeakerMappings()
+        .then((speakers) => respond(true, { speakers }))
+        .catch((err: unknown) => respond(false, null, err instanceof Error ? err : new Error(String(err))))
+    );
+  });
+
   register("mc.briefing.regenerate", ({ params, respond }) => {
     const agentId = typeof params.agentId === "string" ? params.agentId.trim() : undefined;
     const date = typeof params.date === "string" ? params.date.trim() : undefined;

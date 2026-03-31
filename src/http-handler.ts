@@ -19,6 +19,12 @@ import {
 import { verifyWebhookSignature, getWebhookSecret } from "./integrations/github.js";
 import { bootstrapGoogleContactsIntegration } from "./integrations/google-contacts.js";
 import { evaluateEvent } from "./automation-engine.js";
+import {
+  handleOmiTranscript,
+  handleOmiMemoryCreated,
+  handleOmiDaySummary,
+  handleOmiAudioBytes,
+} from "./omi-integration.js";
 
 const MC_PREFIX = "/mission-control";
 const API_PREFIX = `${MC_PREFIX}/api/google`;
@@ -29,6 +35,8 @@ const GCAL_API_PREFIX = `${MC_PREFIX}/api/gcal`;
 const GCAL_API_PREFIX_UNSCOPED = "/api/gcal";
 const GITHUB_API_PREFIX = `${MC_PREFIX}/api/github`;
 const GITHUB_API_PREFIX_UNSCOPED = "/api/github";
+const OMI_API_PREFIX = `${MC_PREFIX}/api/omi`;
+const OMI_API_PREFIX_UNSCOPED = "/api/omi";
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -202,6 +210,15 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+function readBodyBinary(req: IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
 function handleGitHubWebhook(req: IncomingMessage, res: ServerResponse, rawUrl: string): boolean {
   const method = req.method ?? "GET";
   const pathname = rawUrl.split("?")[0];
@@ -253,6 +270,52 @@ function handleGitHubWebhook(req: IncomingMessage, res: ServerResponse, rawUrl: 
   return true;
 }
 
+function handleOmiWebhook(req: IncomingMessage, res: ServerResponse, rawUrl: string): boolean {
+  const method = req.method ?? "GET";
+  const pathname = rawUrl.split("?")[0];
+
+  const isOmi =
+    (pathname.startsWith(OMI_API_PREFIX) || pathname.startsWith(OMI_API_PREFIX_UNSCOPED)) &&
+    method === "POST";
+
+  if (!isOmi) return false;
+
+  void (async () => {
+    try {
+      const route = pathname.endsWith("/transcript") ? "transcript"
+        : pathname.endsWith("/memory") ? "memory"
+        : pathname.endsWith("/day-summary") ? "day-summary"
+        : pathname.endsWith("/audio") ? "audio"
+        : null;
+
+      if (route === "audio") {
+        // Binary body — read before responding
+        const reqUrl = new URL(rawUrl, "http://localhost");
+        const uid = reqUrl.searchParams.get("uid") ?? "unknown";
+        const sampleRate = parseInt(reqUrl.searchParams.get("sample_rate") ?? "8000", 10);
+        const chunk = await readBodyBinary(req);
+        sendJson(res, 200, { ok: true });
+        handleOmiAudioBytes(chunk, uid, sampleRate);
+      } else {
+        const body = await readBody(req);
+        const payload = JSON.parse(body);
+        sendJson(res, 200, { ok: true });
+        if (route === "transcript") {
+          await handleOmiTranscript(payload);
+        } else if (route === "memory") {
+          await handleOmiMemoryCreated(payload);
+        } else if (route === "day-summary") {
+          await handleOmiDaySummary(payload);
+        }
+      }
+    } catch {
+      sendJson(res, 400, { error: "Invalid request" });
+    }
+  })();
+
+  return true;
+}
+
 function getDistDir(): string {
   // This file lives at ~/mission-control/src/http-handler.ts (or compiled equivalent).
   // dist/ui is at ~/mission-control/dist/ui.
@@ -292,11 +355,13 @@ export function handleMissionControlRequest(
   if (url.startsWith(FIRESTORE_API_PREFIX_UNSCOPED)) return handleFirestoreApi(req, res, rawUrl);
   if (url.startsWith(GCAL_API_PREFIX_UNSCOPED)) return handleGCalApi(req, res, rawUrl);
   if (url.startsWith(GITHUB_API_PREFIX_UNSCOPED)) return handleGitHubWebhook(req, res, rawUrl);
+  if (url.startsWith(OMI_API_PREFIX_UNSCOPED)) return handleOmiWebhook(req, res, rawUrl);
   if (!url.startsWith(MC_PREFIX)) return false;
   if (url.startsWith(API_PREFIX)) return handleGoogleApi(req, res, rawUrl);
   if (url.startsWith(FIRESTORE_API_PREFIX)) return handleFirestoreApi(req, res, rawUrl);
   if (url.startsWith(GCAL_API_PREFIX)) return handleGCalApi(req, res, rawUrl);
   if (url.startsWith(GITHUB_API_PREFIX)) return handleGitHubWebhook(req, res, rawUrl);
+  if (url.startsWith(OMI_API_PREFIX)) return handleOmiWebhook(req, res, rawUrl);
 
   const distDir = getDistDir();
 

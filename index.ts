@@ -34,6 +34,7 @@ import {
 } from "./src/sms-inbox.js";
 import type { MediaItem } from "./src/sms-inbox.js";
 import { startRetryService, stopRetryService } from "./src/sms-retry-service.js";
+import { setOmiRuntime, setOmiLogger } from "./src/omi-integration.js";
 
 // ---------------------------------------------------------------------------
 // Twilio payload cache reader (populated by sms-payload-cache.mjs transform)
@@ -95,6 +96,7 @@ const plugin = {
     // window.location (using wss:// when served over https://).
     const bootstrapConfig: Record<string, unknown> = {
       basePath: "/mission-control",
+      omiMcpKey: process.env.OMI_MCP_KEY ?? "",
     };
 
     // Serve Mission Control UI for all /mission-control/* paths
@@ -113,6 +115,13 @@ const plugin = {
 
     // Seed default templates, automation rules, and workflows (skips if already seeded)
     seedIfEmpty();
+
+    // Initialize Omi wearable integration
+    setOmiRuntime(api.runtime);
+    setOmiLogger({
+      info: (msg: string) => api.logger.info(msg),
+      warn: (msg: string) => api.logger.warn(msg),
+    });
 
     // Auto-create Google Contacts integration record if tokens already exist
     bootstrapGoogleContactsIntegration();

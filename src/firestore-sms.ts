@@ -31,7 +31,7 @@ function parseServiceAccount(): any {
   throw new Error("Missing Firebase service account credentials");
 }
 
-async function getDb() {
+export async function getEdpFirestore() {
   const admin = await import("firebase-admin");
   if (!adminApp) {
     const credential = admin.credential.cert(parseServiceAccount());
@@ -72,7 +72,7 @@ export type SmsLogEntry = {
  * Uses messageSid as doc ID for dedup when available.
  */
 export async function logSmsToTwilioLogs(entry: SmsLogEntry): Promise<string> {
-  const db = await getDb();
+  const db = await getEdpFirestore();
   const col = db.collection("twilioSmsLogs");
   const data = {
     ...entry,
@@ -95,7 +95,7 @@ export async function fetchSmsHistory(
   const phones = [...new Set(rawPhones.map(normalizePhone))];
   if (phones.length === 0) return [];
 
-  const db = await getDb();
+  const db = await getEdpFirestore();
   const col = db.collection("twilioSmsLogs");
 
   // Query without orderBy to avoid needing composite indexes; sort in-memory instead
