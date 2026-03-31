@@ -135,9 +135,11 @@ const server = createServer((req, res) => {
 
     const url = (req.url ?? "/").split("?")[0];
 
-    // Proxy API routes to the openclaw gateway
-    if (url.startsWith("/api/omi/")) {
-        proxyToGateway(req, res, url);
+    // Proxy API routes to the openclaw gateway.
+    // The gateway's /api/* namespace is reserved, so we rewrite
+    // /api/omi/* → /mission-control/api/omi/* which the plugin handles.
+    if (url.startsWith("/api/omi/") || url === "/api/omi") {
+        proxyToGateway(req, res, "/mission-control" + url);
         return;
     }
 
