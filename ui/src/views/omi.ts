@@ -2,11 +2,29 @@ import { LitElement, css, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { AppFacade } from "../app.ts";
 
+interface OmiMemory {
+  id: string;
+  content: string;
+  category: string;
+}
+
+interface MemoryLink {
+  personId: string;
+  personName: string;
+  linkedAt: number;
+}
+
+interface CrmPerson {
+  id: string;
+  name: string;
+  company?: string;
+}
+
 @customElement("mc-omi")
 export class McOmi extends LitElement {
   @property({ attribute: false }) app!: AppFacade;
 
-  @state() private memories: { id: string; content: string; category: string }[] = [];
+  @state() private memories: OmiMemory[] = [];
   @state() private speakers: { omiSpeakerId: number; personName: string; personId: string; conversationCount: number }[] = [];
   @state() private loadingMemories = false;
   @state() private loadingSpeakers = false;
@@ -19,6 +37,15 @@ export class McOmi extends LitElement {
   @state() private newPersonId = "";
   @state() private newPersonName = "";
   @state() private saveMsg = "";
+
+  // Memory modal
+  @state() private selectedMemory: OmiMemory | null = null;
+  @state() private memoryLinks: MemoryLink[] = [];
+  @state() private loadingLinks = false;
+  @state() private allPeople: CrmPerson[] = [];
+  @state() private personSearch = "";
+  @state() private linkingPersonId = "";
+  @state() private linkMsg = "";
 
   static styles = css`
     :host {
@@ -104,6 +131,11 @@ export class McOmi extends LitElement {
     }
     .btn:hover { opacity: 0.8; }
     .btn-primary { background: #5b21b6; color: #fff; }
+    .btn-ghost {
+      background: transparent;
+      color: #64748b;
+      border: 1px solid #1e1e2e;
+    }
     .btn-sm { font-size: 11px; padding: 4px 10px; }
     table {
       width: 100%;
@@ -136,15 +168,41 @@ export class McOmi extends LitElement {
       background: #1e1e2e;
       color: #94a3b8;
     }
+    .badge.purple { background: #1a1440; color: #a78bfa; }
+    .memory-row {
+      padding: 10px 12px;
+      border-bottom: 1px solid #0f0f1a;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: background 0.1s;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .memory-row:hover { background: #16161f; }
+    .memory-row:last-child { border-bottom: none; }
+    .memory-text {
+      flex: 1;
+      min-width: 0;
+    }
     .memory-content {
       color: #e2e8f0;
       font-size: 12px;
       line-height: 1.5;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .memory-cat {
       font-size: 10px;
       color: #64748b;
       margin-top: 3px;
+    }
+    .memory-chevron {
+      color: #334155;
+      font-size: 14px;
+      padding-top: 1px;
+      flex-shrink: 0;
     }
     .form-row {
       display: flex;
@@ -178,6 +236,126 @@ export class McOmi extends LitElement {
       margin-top: 8px;
       word-break: break-all;
     }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 24px;
+    }
+    .modal {
+      background: #111118;
+      border: 1px solid #2d2d3f;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 560px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid #1e1e2e;
+    }
+    .modal-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      color: #475569;
+      font-size: 18px;
+      cursor: pointer;
+      line-height: 1;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .modal-close:hover { color: #94a3b8; background: #1e1e2e; }
+    .modal-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .modal-content-text {
+      color: #e2e8f0;
+      font-size: 13px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+    }
+    .modal-section-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #475569;
+      margin-bottom: 8px;
+    }
+    .linked-person {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 10px;
+      background: #0f0f1a;
+      border-radius: 8px;
+      margin-bottom: 6px;
+    }
+    .linked-person-name { font-size: 12px; color: #cbd5e1; }
+    .unlink-btn {
+      background: none;
+      border: none;
+      color: #475569;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 4px;
+      line-height: 1;
+    }
+    .unlink-btn:hover { color: #f87171; }
+    .people-search {
+      width: 100%;
+      box-sizing: border-box;
+      background: #0f0f1a;
+      border: 1px solid #1e1e2e;
+      border-radius: 8px;
+      color: #e2e8f0;
+      font-size: 12px;
+      padding: 7px 12px;
+    }
+    .people-search:focus { outline: none; border-color: #5b21b6; }
+    .people-dropdown {
+      background: #0d0d16;
+      border: 1px solid #1e1e2e;
+      border-radius: 8px;
+      margin-top: 4px;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+    .people-option {
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      color: #cbd5e1;
+      border-bottom: 1px solid #0f0f1a;
+    }
+    .people-option:last-child { border-bottom: none; }
+    .people-option:hover { background: #16161f; }
+    .people-option-sub { font-size: 10px; color: #475569; margin-top: 1px; }
+    .link-msg { font-size: 11px; color: #34d399; margin-top: 6px; }
+    .btn-danger { background: transparent; color: #f87171; border: 1px solid #3f1a1a; }
+    .btn-danger:hover { background: #3f1a1a; }
   `;
 
   connectedCallback() {
@@ -237,8 +415,169 @@ export class McOmi extends LitElement {
     }
   }
 
+  @state() private deletingMemory = false;
+
+  // ── Modal ──────────────────────────────────────────────────────────────────
+
+  private async openMemory(memory: OmiMemory) {
+    this.selectedMemory = memory;
+    this.memoryLinks = [];
+    this.personSearch = "";
+    this.linkMsg = "";
+    this.loadingLinks = true;
+
+    // Load links + all people in parallel
+    const [linksResult, peopleResult] = await Promise.allSettled([
+      this.app.gw.request<{ links: MemoryLink[] }>("mc.omi.getMemoryLinks", { memoryId: memory.id }),
+      this.app.gw.request<{ people: CrmPerson[] }>("mc.people.list", {}),
+    ]);
+
+    this.memoryLinks = linksResult.status === "fulfilled" ? (linksResult.value?.links ?? []) : [];
+    this.allPeople = peopleResult.status === "fulfilled" ? (peopleResult.value?.people ?? []) : [];
+    this.loadingLinks = false;
+  }
+
+  private closeModal() {
+    this.selectedMemory = null;
+    this.personSearch = "";
+    this.linkMsg = "";
+    this.deletingMemory = false;
+  }
+
+  private async deleteMemory() {
+    if (!this.selectedMemory) return;
+    if (!confirm(`Delete this memory? This cannot be undone.`)) return;
+    this.deletingMemory = true;
+    try {
+      await fetch(`/api/omi/memories/${encodeURIComponent(this.selectedMemory.id)}`, { method: "DELETE" });
+      this.memories = this.memories.filter(m => m.id !== this.selectedMemory!.id);
+      this.closeModal();
+    } catch (err) {
+      console.error("delete failed:", err);
+      this.deletingMemory = false;
+    }
+  }
+
+  private async linkPerson(person: CrmPerson) {
+    if (!this.selectedMemory) return;
+    this.linkingPersonId = person.id;
+    try {
+      await this.app.gw.request("mc.omi.linkPerson", {
+        memoryId: this.selectedMemory.id,
+        personId: person.id,
+        personName: person.name,
+      });
+      this.personSearch = "";
+      this.linkMsg = `Linked ${person.name}`;
+      // Refresh links
+      const data = await this.app.gw.request<{ links: MemoryLink[] }>("mc.omi.getMemoryLinks", {
+        memoryId: this.selectedMemory.id,
+      });
+      this.memoryLinks = data?.links ?? [];
+      setTimeout(() => { this.linkMsg = ""; }, 3000);
+    } catch (err) {
+      this.linkMsg = `Error: ${err}`;
+    } finally {
+      this.linkingPersonId = "";
+    }
+  }
+
+  private async unlinkPerson(personId: string) {
+    if (!this.selectedMemory) return;
+    try {
+      await this.app.gw.request("mc.omi.unlinkPerson", {
+        memoryId: this.selectedMemory.id,
+        personId,
+      });
+      this.memoryLinks = this.memoryLinks.filter(l => l.personId !== personId);
+    } catch (err) {
+      console.error("unlink failed:", err);
+    }
+  }
+
+  private get filteredPeople(): CrmPerson[] {
+    const q = this.personSearch.toLowerCase().trim();
+    if (!q) return [];
+    const linked = new Set(this.memoryLinks.map(l => l.personId));
+    return this.allPeople
+      .filter(p => !linked.has(p.id) && (
+        p.name.toLowerCase().includes(q) ||
+        (p.company ?? "").toLowerCase().includes(q)
+      ))
+      .slice(0, 8);
+  }
+
+  private renderModal() {
+    const m = this.selectedMemory;
+    if (!m) return "";
+    return html`
+      <div class="modal-overlay" @click=${(e: Event) => { if (e.target === e.currentTarget) this.closeModal(); }}>
+        <div class="modal">
+          <div class="modal-header">
+            <span class="modal-title">Memory</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="badge purple">${m.category}</span>
+              <button class="btn btn-danger btn-sm" @click=${this.deleteMemory}
+                ?disabled=${this.deletingMemory}>
+                ${this.deletingMemory ? "Deleting…" : "Delete"}
+              </button>
+              <button class="modal-close" @click=${this.closeModal}>✕</button>
+            </div>
+          </div>
+          <div class="modal-body">
+            <!-- Content -->
+            <div>
+              <div class="modal-section-label">Content</div>
+              <div class="modal-content-text">${m.content}</div>
+            </div>
+
+            <!-- Linked people -->
+            <div>
+              <div class="modal-section-label">People</div>
+              ${this.loadingLinks ? html`<div class="empty">Loading…</div>` : ""}
+              ${this.memoryLinks.length === 0 && !this.loadingLinks
+                ? html`<div class="empty">No people linked yet.</div>`
+                : ""}
+              ${this.memoryLinks.map(link => html`
+                <div class="linked-person">
+                  <span class="linked-person-name">${link.personName}</span>
+                  <button class="unlink-btn" title="Remove" @click=${() => this.unlinkPerson(link.personId)}>✕</button>
+                </div>
+              `)}
+
+              <!-- Search to add -->
+              <div style="margin-top:10px">
+                <input
+                  class="people-search"
+                  placeholder="Search CRM contacts to link…"
+                  .value=${this.personSearch}
+                  @input=${(e: Event) => { this.personSearch = (e.target as HTMLInputElement).value; }}
+                />
+                ${this.filteredPeople.length > 0 ? html`
+                  <div class="people-dropdown">
+                    ${this.filteredPeople.map(p => html`
+                      <div class="people-option"
+                        @click=${() => this.linkPerson(p)}
+                        style=${this.linkingPersonId === p.id ? "opacity:0.5;pointer-events:none" : ""}>
+                        <div>${p.name}</div>
+                        ${p.company ? html`<div class="people-option-sub">${p.company}</div>` : ""}
+                      </div>
+                    `)}
+                  </div>
+                ` : ""}
+                ${this.linkMsg ? html`<div class="link-msg">${this.linkMsg}</div>` : ""}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   render() {
     return html`
+      ${this.renderModal()}
+
       <h2>Omi Wearable</h2>
       <p class="subtitle">Live integration status, speaker mappings, and captured memories</p>
 
@@ -360,9 +699,12 @@ export class McOmi extends LitElement {
           ? html`<div class="empty">No memories found.</div>`
           : ""}
         ${this.memories.map(m => html`
-          <div style="padding: 10px 0; border-bottom: 1px solid #0f0f1a;">
-            <div class="memory-content">${m.content}</div>
-            <div class="memory-cat">${m.category}</div>
+          <div class="memory-row" @click=${() => this.openMemory(m)}>
+            <div class="memory-text">
+              <div class="memory-content">${m.content}</div>
+              <div class="memory-cat">${m.category}</div>
+            </div>
+            <span class="memory-chevron">›</span>
           </div>
         `)}
       </div>

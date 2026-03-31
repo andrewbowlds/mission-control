@@ -1941,6 +1941,41 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     respond(true, { briefings: getBriefingHistory(agentId, limit) });
   });
 
+  // ── Omi profiles ─────────────────────────────────────────────────────────────
+
+  register("mc.omi.addProfile", ({ params, respond }) => {
+    const displayName = typeof params.displayName === "string" ? params.displayName.trim() : "";
+    const omiUid = typeof params.omiUid === "string" ? params.omiUid.trim() : "";
+    const omiMcpKey = typeof params.omiMcpKey === "string" ? params.omiMcpKey.trim() : "";
+    if (!displayName || !omiUid || !omiMcpKey) {
+      respond(false, { error: "displayName, omiUid, and omiMcpKey are required" });
+      return;
+    }
+    void import("./omi-integration.js").then(({ addOmiProfile }) =>
+      addOmiProfile(displayName, omiUid, omiMcpKey)
+        .then((profile) => respond(true, { profile }))
+        .catch((err: unknown) => respond(false, { error: err instanceof Error ? err.message : String(err) }))
+    );
+  });
+
+  register("mc.omi.listProfiles", ({ respond }) => {
+    void import("./omi-integration.js").then(({ listOmiProfiles }) =>
+      listOmiProfiles()
+        .then((profiles) => respond(true, { profiles }))
+        .catch((err: unknown) => respond(false, { error: err instanceof Error ? err.message : String(err) }))
+    );
+  });
+
+  register("mc.omi.removeProfile", ({ params, respond }) => {
+    const id = typeof params.id === "string" ? params.id.trim() : "";
+    if (!id) { respond(false, { error: "id is required" }); return; }
+    void import("./omi-integration.js").then(({ removeOmiProfile }) =>
+      removeOmiProfile(id)
+        .then(() => respond(true, { ok: true }))
+        .catch((err: unknown) => respond(false, { error: err instanceof Error ? err.message : String(err) }))
+    );
+  });
+
   // ── Omi ──────────────────────────────────────────────────────────────────────
   register("mc.omi.saveSpeaker", ({ params, respond }) => {
     const omiSpeakerId = typeof params.omiSpeakerId === "number" ? params.omiSpeakerId : Number(params.omiSpeakerId);
@@ -1965,6 +2000,45 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     );
   });
 
+  register("mc.omi.linkPerson", ({ params, respond }) => {
+    const memoryId = typeof params.memoryId === "string" ? params.memoryId.trim() : "";
+    const personId = typeof params.personId === "string" ? params.personId.trim() : "";
+    const personName = typeof params.personName === "string" ? params.personName.trim() : "";
+    if (!memoryId || !personId || !personName) {
+      respond(false, { error: "memoryId, personId, and personName are required" });
+      return;
+    }
+    void import("./omi-integration.js").then(({ linkPersonToMemory }) =>
+      linkPersonToMemory(memoryId, personId, personName)
+        .then(() => respond(true, { ok: true }))
+        .catch((err: unknown) => respond(false, { error: err instanceof Error ? err.message : String(err) }))
+    );
+  });
+
+  register("mc.omi.unlinkPerson", ({ params, respond }) => {
+    const memoryId = typeof params.memoryId === "string" ? params.memoryId.trim() : "";
+    const personId = typeof params.personId === "string" ? params.personId.trim() : "";
+    if (!memoryId || !personId) {
+      respond(false, { error: "memoryId and personId are required" });
+      return;
+    }
+    void import("./omi-integration.js").then(({ unlinkPersonFromMemory }) =>
+      unlinkPersonFromMemory(memoryId, personId)
+        .then(() => respond(true, { ok: true }))
+        .catch((err: unknown) => respond(false, { error: err instanceof Error ? err.message : String(err) }))
+    );
+  });
+
+  register("mc.omi.getMemoryLinks", ({ params, respond }) => {
+    const memoryId = typeof params.memoryId === "string" ? params.memoryId.trim() : "";
+    if (!memoryId) { respond(false, { error: "memoryId is required" }); return; }
+    void import("./omi-integration.js").then(({ getMemoryLinks }) =>
+      getMemoryLinks(memoryId)
+        .then((links) => respond(true, { links }))
+        .catch((err: unknown) => respond(false, { error: err instanceof Error ? err.message : String(err) }))
+    );
+  });
+
   register("mc.omi.createMemory", ({ params, respond }) => {
     const content = typeof params.content === "string" ? params.content.trim() : "";
     const category = typeof params.category === "string" ? params.category.trim() : "system";
@@ -1972,6 +2046,16 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     void import("./omi-integration.js").then(({ createOmiMemory }) =>
       createOmiMemory(content, category)
         .then((id) => respond(true, { id }))
+        .catch((err: unknown) => respond(false, { error: err instanceof Error ? err.message : String(err) }))
+    );
+  });
+
+  register("mc.omi.deleteMemory", ({ params, respond }) => {
+    const id = typeof params.id === "string" ? params.id.trim() : "";
+    if (!id) { respond(false, { error: "id is required" }); return; }
+    void import("./omi-integration.js").then(({ deleteOmiMemory }) =>
+      deleteOmiMemory(id)
+        .then(() => respond(true, { ok: true }))
         .catch((err: unknown) => respond(false, { error: err instanceof Error ? err.message : String(err) }))
     );
   });

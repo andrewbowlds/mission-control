@@ -102,7 +102,7 @@ const plugin = {
     // Serve Mission Control UI for all /mission-control/* paths
     api.registerHttpRoute({
       path: "/mission-control",
-      auth: "none",
+      auth: "plugin",
       match: "prefix",
       handler: (req, res) => handleMissionControlRequest(req, res, bootstrapConfig),
     });

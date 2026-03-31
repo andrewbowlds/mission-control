@@ -72,6 +72,83 @@ export interface OmiDaySummary {
   uid?: string;
 }
 
+// ── Omi User Profiles ─────────────────────────────────────────────────────────
+// Each team member who wears an Omi connects their own account here.
+// The MCP key is stored server-side in Firestore and never sent to the browser.
+
+export interface OmiProfile {
+  id: string;           // Firestore doc ID
+  displayName: string;  // e.g. "Andrew", "Sarah"
+  omiUid: string;       // Omi device UID (shown in Omi app → Developer → User ID)
+  connectedAt: number;
+}
+
+// Internal shape stored in Firestore (includes the secret key)
+interface OmiProfileRecord extends OmiProfile {
+  omiMcpKey: string;
+}
+
+export async function addOmiProfile(
+  displayName: string,
+  omiUid: string,
+  omiMcpKey: string,
+): Promise<OmiProfile> {
+  // Verify the key works before saving
+  const testRes = await fetch("https://api.omi.me/v1/mcp/memories", {
+    headers: { Authorization: `Bearer ${omiMcpKey}` },
+  });
+  if (!testRes.ok) throw new Error(`Omi API key validation failed (${testRes.status}) — check your MCP key`);
+
+  const db = await getEdpFirestore();
+  const col = db.collection("omiProfiles");
+
+  // Upsert by omiUid so reconnecting overwrites the old key
+  const existing = await col.where("omiUid", "==", omiUid).limit(1).get();
+  const now = Date.now();
+  const profile: Omit<OmiProfileRecord, "id"> = { displayName, omiUid, omiMcpKey, connectedAt: now };
+
+  let docId: string;
+  if (!existing.empty) {
+    await existing.docs[0].ref.set(profile, { merge: true });
+    docId = existing.docs[0].id;
+  } else {
+    const ref = await col.add(profile);
+    docId = ref.id;
+  }
+  log.info(`[omi] profile connected: ${displayName} (uid: ${omiUid})`);
+  return { id: docId, displayName, omiUid, connectedAt: now };
+}
+
+export async function listOmiProfiles(): Promise<OmiProfile[]> {
+  const db = await getEdpFirestore();
+  const snap = await db.collection("omiProfiles").orderBy("connectedAt", "desc").get();
+  return snap.docs.map(d => {
+    const { omiMcpKey: _, ...pub } = d.data() as OmiProfileRecord;
+    return { id: d.id, ...pub } as OmiProfile;
+  });
+}
+
+export async function removeOmiProfile(id: string): Promise<void> {
+  const db = await getEdpFirestore();
+  await db.collection("omiProfiles").doc(id).delete();
+  log.info(`[omi] profile removed: ${id}`);
+}
+
+async function getProfileMcpKey(profileId: string): Promise<string | null> {
+  const db = await getEdpFirestore();
+  const doc = await db.collection("omiProfiles").doc(profileId).get();
+  if (!doc.exists) return null;
+  return (doc.data() as OmiProfileRecord).omiMcpKey ?? null;
+}
+
+async function getProfileByUid(omiUid: string): Promise<OmiProfileRecord | null> {
+  const db = await getEdpFirestore();
+  const snap = await db.collection("omiProfiles").where("omiUid", "==", omiUid).limit(1).get();
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return { id: d.id, ...(d.data() as OmiProfileRecord) };
+}
+
 // ── Module-level state ────────────────────────────────────────────────────────
 
 let runtime: PluginRuntime | null = null;
@@ -265,6 +342,11 @@ export async function handleOmiTranscript(payload: OmiRealtimePayload): Promise<
 
 export async function handleOmiMemoryCreated(conversation: OmiConversation): Promise<void> {
   if (!conversation.id) return;
+
+  // Resolve which team member this conversation belongs to
+  const profile = conversation.uid ? await getProfileByUid(conversation.uid) : null;
+  const profileLabel = profile ? profile.displayName : (conversation.uid ?? "unknown user");
+  log.info(`[omi] memory_created for ${profileLabel}`);
 
   const title = conversation.structured?.title ?? "Untitled conversation";
   const overview = conversation.structured?.overview ?? "";
@@ -478,8 +560,8 @@ let memoryCacheContext = "";
 let memoryCacheTs = 0;
 const MEMORY_CACHE_TTL = 5 * 60 * 1000;
 
-async function fetchOmiMemories(): Promise<OmiMemory[]> {
-  const key = process.env.OMI_MCP_KEY;
+async function fetchOmiMemories(mcpKey?: string): Promise<OmiMemory[]> {
+  const key = mcpKey ?? process.env.OMI_MCP_KEY;
   if (!key) return [];
   const res = await fetch("https://api.omi.me/v1/mcp/memories", {
     headers: { Authorization: `Bearer ${key}` },
@@ -488,12 +570,37 @@ async function fetchOmiMemories(): Promise<OmiMemory[]> {
   return res.json() as Promise<OmiMemory[]>;
 }
 
+/** Fetch memories for a specific profile by ID. Used by the per-user API route. */
+export async function fetchProfileMemories(profileId: string): Promise<OmiMemory[]> {
+  const key = await getProfileMcpKey(profileId);
+  if (!key) throw new Error("Profile not found");
+  return fetchOmiMemories(key);
+}
+
 function refreshMemoryCache(): void {
   fetchOmiMemories()
-    .then(memories => {
+    .then(async memories => {
       if (!memories.length) { memoryCacheContext = ""; return; }
+
+      // Enrich with linked CRM people from Firestore
+      const linkMap = new Map<string, string[]>();
+      try {
+        const db = await getEdpFirestore();
+        const snap = await db.collection("omiMemoryLinks").get();
+        for (const doc of snap.docs) {
+          const d = doc.data() as OmiMemoryLink;
+          const arr = linkMap.get(d.memoryId) ?? [];
+          arr.push(d.personName);
+          linkMap.set(d.memoryId, arr);
+        }
+      } catch { /* non-fatal */ }
+
       memoryCacheContext = memories
-        .map(m => `- [${m.category}] ${m.content}`)
+        .map(m => {
+          const people = linkMap.get(m.id) ?? [];
+          const peopleStr = people.length > 0 ? ` [linked: ${people.join(", ")}]` : "";
+          return `- [${m.category}] ${m.content}${peopleStr}`;
+        })
         .join("\n");
       memoryCacheTs = Date.now();
       log.info(`[omi] memory cache refreshed (${memories.length} memories)`);
@@ -512,6 +619,19 @@ export function getOmiMemoriesContext(): string {
   return memoryCacheContext;
 }
 
+/** Delete a memory from omi via MCP API. */
+export async function deleteOmiMemory(id: string, profileId?: string): Promise<void> {
+  const key = profileId ? await getProfileMcpKey(profileId) : process.env.OMI_MCP_KEY;
+  if (!key) throw new Error(profileId ? "Profile not found" : "OMI_MCP_KEY not set");
+  const res = await fetch(`https://api.omi.me/v1/mcp/memories/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${key}` },
+  });
+  if (!res.ok) throw new Error(`omi delete memory ${res.status}`);
+  memoryCacheTs = 0;
+  refreshMemoryCache();
+}
+
 /** Write a new memory to omi via MCP API. */
 export async function createOmiMemory(content: string, category = "system"): Promise<string> {
   const key = process.env.OMI_MCP_KEY;
@@ -527,6 +647,54 @@ export async function createOmiMemory(content: string, category = "system"): Pro
   memoryCacheTs = 0;
   refreshMemoryCache();
   return data.id;
+}
+
+// ── Memory ↔ person links ─────────────────────────────────────────────────────
+
+export interface OmiMemoryLink {
+  memoryId: string;
+  personId: string;
+  personName: string;
+  linkedAt: number;
+}
+
+export async function linkPersonToMemory(
+  memoryId: string,
+  personId: string,
+  personName: string,
+): Promise<void> {
+  const db = await getEdpFirestore();
+  const col = db.collection("omiMemoryLinks");
+  const existing = await col
+    .where("memoryId", "==", memoryId)
+    .where("personId", "==", personId)
+    .limit(1)
+    .get();
+  if (!existing.empty) return;
+  await col.add({ memoryId, personId, personName, linkedAt: Date.now() });
+  log.info(`[omi] linked ${personName} to memory ${memoryId}`);
+}
+
+export async function unlinkPersonFromMemory(
+  memoryId: string,
+  personId: string,
+): Promise<void> {
+  const db = await getEdpFirestore();
+  const snap = await db.collection("omiMemoryLinks")
+    .where("memoryId", "==", memoryId)
+    .where("personId", "==", personId)
+    .get();
+  await Promise.all(snap.docs.map(d => d.ref.delete()));
+  log.info(`[omi] unlinked ${personId} from memory ${memoryId}`);
+}
+
+export async function getMemoryLinks(memoryId: string): Promise<OmiMemoryLink[]> {
+  const db = await getEdpFirestore();
+  const snap = await db.collection("omiMemoryLinks")
+    .where("memoryId", "==", memoryId)
+    .orderBy("linkedAt", "desc")
+    .get();
+  return snap.docs.map(d => d.data() as OmiMemoryLink);
 }
 
 // ── audio_bytes handler ───────────────────────────────────────────────────────

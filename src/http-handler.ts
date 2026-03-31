@@ -24,6 +24,8 @@ import {
   handleOmiMemoryCreated,
   handleOmiDaySummary,
   handleOmiAudioBytes,
+  deleteOmiMemory,
+  fetchProfileMemories,
 } from "./omi-integration.js";
 
 const MC_PREFIX = "/mission-control";
@@ -279,6 +281,17 @@ function handleOmiWebhook(req: IncomingMessage, res: ServerResponse, rawUrl: str
 
   void (async () => {
     try {
+      // DELETE /api/omi/memories/{id}?profileId=xxx
+      const memDeleteMatch = /\/memories\/([^/?]+)$/.exec(pathname);
+      if (memDeleteMatch && method === "DELETE") {
+        const memId = decodeURIComponent(memDeleteMatch[1] ?? "");
+        const reqUrl2 = new URL(rawUrl, "http://localhost");
+        const profileId = reqUrl2.searchParams.get("profileId") ?? undefined;
+        await deleteOmiMemory(memId, profileId);
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
       const route = pathname.endsWith("/transcript") ? "transcript"
         : pathname.endsWith("/memories") ? "memories"
         : pathname.endsWith("/memory") ? "memory"
@@ -287,14 +300,22 @@ function handleOmiWebhook(req: IncomingMessage, res: ServerResponse, rawUrl: str
         : null;
 
       if (route === "memories") {
-        // Proxy GET → omi MCP API (avoids browser CORS)
-        const key = process.env.OMI_MCP_KEY ?? "";
-        if (!key) { sendJson(res, 503, { error: "OMI_MCP_KEY not configured" }); return; }
-        const apiRes = await fetch("https://api.omi.me/v1/mcp/memories", {
-          headers: { Authorization: `Bearer ${key}` },
-        });
-        const data = await apiRes.json();
-        sendJson(res, apiRes.ok ? 200 : apiRes.status, data);
+        const reqUrl3 = new URL(rawUrl, "http://localhost");
+        const profileId = reqUrl3.searchParams.get("profileId");
+        if (profileId) {
+          // Per-profile memories (team member's own Omi account)
+          const memories = await fetchProfileMemories(profileId);
+          sendJson(res, 200, memories);
+        } else {
+          // Fallback: admin key from env (backwards compat / server-level key)
+          const key = process.env.OMI_MCP_KEY ?? "";
+          if (!key) { sendJson(res, 503, { error: "No Omi profile connected" }); return; }
+          const apiRes = await fetch("https://api.omi.me/v1/mcp/memories", {
+            headers: { Authorization: `Bearer ${key}` },
+          });
+          const data = await apiRes.json();
+          sendJson(res, apiRes.ok ? 200 : apiRes.status, data);
+        }
       } else if (route === "audio") {
         // Binary body — read before responding
         const reqUrl = new URL(rawUrl, "http://localhost");
