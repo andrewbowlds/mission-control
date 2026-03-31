@@ -190,9 +190,7 @@ export class McOmi extends LitElement {
     this.loadingMemories = true;
     this.memoriesError = "";
     try {
-      const res = await fetch("https://api.omi.me/v1/mcp/memories", {
-        headers: { Authorization: `Bearer ${this.app.omiMcpKey ?? ""}` },
-      });
+      const res = await fetch("/api/omi/memories");
       if (!res.ok) throw new Error(`${res.status}`);
       this.memories = await res.json();
     } catch (err) {
@@ -239,10 +237,6 @@ export class McOmi extends LitElement {
     }
   }
 
-  private get baseUrl() {
-    return window.location.origin;
-  }
-
   render() {
     return html`
       <h2>Omi Wearable</h2>
@@ -260,7 +254,7 @@ export class McOmi extends LitElement {
             </div>
           </div>
           <div class="status-row"><span class="dot live"></span> Active</div>
-          <div class="webhook-url">${this.baseUrl}/api/omi/transcript</div>
+          <div class="webhook-url">/api/omi/transcript</div>
         </div>
         <div class="card">
           <div class="card-header">
@@ -271,7 +265,7 @@ export class McOmi extends LitElement {
             </div>
           </div>
           <div class="status-row"><span class="dot off"></span> Configure in Omi app</div>
-          <div class="webhook-url">${this.baseUrl}/api/omi/memory</div>
+          <div class="webhook-url">/api/omi/memory</div>
         </div>
         <div class="card">
           <div class="card-header">
@@ -282,7 +276,7 @@ export class McOmi extends LitElement {
             </div>
           </div>
           <div class="status-row"><span class="dot off"></span> Configure in Omi app</div>
-          <div class="webhook-url">${this.baseUrl}/api/omi/day-summary</div>
+          <div class="webhook-url">/api/omi/day-summary</div>
         </div>
         <div class="card">
           <div class="card-header">
@@ -293,7 +287,7 @@ export class McOmi extends LitElement {
             </div>
           </div>
           <div class="status-row"><span class="dot live"></span> Active · 5s interval</div>
-          <div class="webhook-url">${this.baseUrl}/api/omi/audio</div>
+          <div class="webhook-url">/api/omi/audio</div>
         </div>
       </div>
 

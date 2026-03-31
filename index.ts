@@ -107,6 +107,15 @@ const plugin = {
       handler: (req, res) => handleMissionControlRequest(req, res, bootstrapConfig),
     });
 
+    // Expose omi webhook + API routes at /api/omi/* (for direct gateway access
+    // and for the mc-server.js reverse proxy from missioncontrol.edprealty.com)
+    api.registerHttpRoute({
+      path: "/api/omi",
+      auth: "none",
+      match: "prefix",
+      handler: (req, res) => handleMissionControlRequest(req, res, bootstrapConfig),
+    });
+
     // Register all mc.* gateway RPC methods
     registerMcMethods(api);
 

@@ -1947,13 +1947,13 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     const personId = typeof params.personId === "string" ? params.personId.trim() : "";
     const personName = typeof params.personName === "string" ? params.personName.trim() : "";
     if (isNaN(omiSpeakerId) || !personId || !personName) {
-      respond(false, null, new Error("omiSpeakerId (number), personId, and personName are required"));
+      respond(false, { error: "omiSpeakerId (number), personId, and personName are required" });
       return;
     }
     void import("./omi-integration.js").then(({ saveSpeakerMapping }) =>
       saveSpeakerMapping(omiSpeakerId, personId, personName)
         .then(() => respond(true, { ok: true }))
-        .catch((err: unknown) => respond(false, null, err instanceof Error ? err : new Error(String(err))))
+        .catch((err: unknown) => respond(false, { error: err instanceof Error ? err.message : String(err) }))
     );
   });
 
@@ -1961,18 +1961,18 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
     void import("./omi-integration.js").then(({ listSpeakerMappings }) =>
       listSpeakerMappings()
         .then((speakers) => respond(true, { speakers }))
-        .catch((err: unknown) => respond(false, null, err instanceof Error ? err : new Error(String(err))))
+        .catch((err: unknown) => respond(false, { error: err instanceof Error ? err.message : String(err) }))
     );
   });
 
   register("mc.omi.createMemory", ({ params, respond }) => {
     const content = typeof params.content === "string" ? params.content.trim() : "";
     const category = typeof params.category === "string" ? params.category.trim() : "system";
-    if (!content) { respond(false, null, new Error("content is required")); return; }
+    if (!content) { respond(false, { error: "content is required" }); return; }
     void import("./omi-integration.js").then(({ createOmiMemory }) =>
       createOmiMemory(content, category)
         .then((id) => respond(true, { id }))
-        .catch((err: unknown) => respond(false, null, err instanceof Error ? err : new Error(String(err))))
+        .catch((err: unknown) => respond(false, { error: err instanceof Error ? err.message : String(err) }))
     );
   });
 

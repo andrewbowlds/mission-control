@@ -90,6 +90,36 @@ function serveIndex(res, origin) {
     res.end(html);
 }
 
+const GATEWAY_HTTP_URL =
+    process.env.MC_GATEWAY_HTTP_URL ?? "http://127.0.0.1:18789";
+
+/** Proxy a request to the openclaw gateway and pipe the response back. */
+function proxyToGateway(req, res, targetPath) {
+    const url = new URL(targetPath, GATEWAY_HTTP_URL);
+    const options = {
+        hostname: url.hostname,
+        port: url.port || 18789,
+        path: url.pathname + (req.url?.split("?")[1] ? `?${req.url.split("?")[1]}` : ""),
+        method: req.method,
+        headers: {
+            ...req.headers,
+            host: url.host,
+        },
+    };
+
+    import("node:http").then(({ default: http }) => {
+        const proxy = http.request(options, (proxyRes) => {
+            res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
+            proxyRes.pipe(res);
+        });
+        proxy.on("error", () => {
+            res.writeHead(502, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Gateway unavailable" }));
+        });
+        req.pipe(proxy);
+    });
+}
+
 const server = createServer((req, res) => {
     const origin = req.headers.origin ?? "";
 
@@ -104,6 +134,12 @@ const server = createServer((req, res) => {
     }
 
     const url = (req.url ?? "/").split("?")[0];
+
+    // Proxy API routes to the openclaw gateway
+    if (url.startsWith("/api/omi/")) {
+        proxyToGateway(req, res, url);
+        return;
+    }
 
     // Serve static assets
     let filePath = url === "/" || url === "" ? "/index.html" : url;

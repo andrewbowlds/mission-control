@@ -274,15 +274,13 @@ function handleOmiWebhook(req: IncomingMessage, res: ServerResponse, rawUrl: str
   const method = req.method ?? "GET";
   const pathname = rawUrl.split("?")[0];
 
-  const isOmi =
-    (pathname.startsWith(OMI_API_PREFIX) || pathname.startsWith(OMI_API_PREFIX_UNSCOPED)) &&
-    method === "POST";
-
+  const isOmi = pathname.startsWith(OMI_API_PREFIX) || pathname.startsWith(OMI_API_PREFIX_UNSCOPED);
   if (!isOmi) return false;
 
   void (async () => {
     try {
       const route = pathname.endsWith("/transcript") ? "transcript"
+        : pathname.endsWith("/memories") ? "memories"
         : pathname.endsWith("/memory") ? "memory"
         : pathname.endsWith("/day-summary") ? "day-summary"
         : pathname.endsWith("/audio") ? "audio"

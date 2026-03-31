@@ -493,7 +493,6 @@ const MC_GATEWAY_TOKEN_KEY = "mc.gateway.token.v1";
 /** App facade passed down to views */
 export type AppFacade = {
   gw: MCGatewayClient;
-  omiMcpKey?: string;
   agents: AgentRow[];
   sessions: SessionRow[];
   subagents: any[];
@@ -1672,7 +1671,6 @@ export class McApp extends LitElement {
   private buildFacade(): AppFacade {
     return {
       gw: this.gw,
-      omiMcpKey: (window as any).__mcBootstrap?.omiMcpKey,
       agents: this.agents,
       sessions: this.sessions,
       subagents: this.subagents,
