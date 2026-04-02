@@ -228,6 +228,15 @@ export class MCCalendar extends LitElement {
     }
     .month-more { font-size: 9px; color: #64748b; padding: 1px 4px; }
 
+    /* ── Cron job events ────────────────────────────────────────── */
+    .chip-cron { border-left-color: #22c55e; background: #0a1f0f; color: #86efac; }
+    .chip-cron-disabled { opacity: 0.45; }
+    .cal-event-timed.ev-cron {
+      background: #0a1f0f; border-color: #166534; border-left-color: #22c55e; color: #86efac;
+    }
+    .cal-event-timed.ev-cron:hover { background: #14532d; }
+    .cal-event-timed.ev-cron-disabled { opacity: 0.4; }
+
     /* ── Empty state ────────────────────────────────────────────── */
     .cal-empty { text-align: center; padding: 40px; color: #475569; }
   `;
@@ -329,9 +338,52 @@ export class MCCalendar extends LitElement {
 
   // ── Event helpers ────────────────────────────────────────────────────────
 
-  private eventsForDay(day: Date): CalendarEvent[] {
-    const events = this.app.calendarEvents || [];
-    return events.filter((ev) => {
+  private cronEventsForDay(day: Date): Array<CalendarEvent & { isCron: true; jobEnabled: boolean }> {
+    const jobs = this.app.cronJobs || [];
+    const dayStart = new Date(day); dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(day); dayEnd.setHours(23, 59, 59, 999);
+    const ds = dayStart.getTime(), de = dayEnd.getTime();
+    const dur = 20 * 60 * 1000; // 20-minute display duration
+    const results: Array<CalendarEvent & { isCron: true; jobEnabled: boolean }> = [];
+
+    for (const job of jobs) {
+      const name = job.name || job.id || "Scheduled Job";
+      const enabled = job.enabled !== false;
+      const sched = job.schedule;
+
+      const makeEv = (t: number) => ({
+        id: `cron-${job.id}-${t}`,
+        integrationId: "cron",
+        externalId: job.id,
+        title: name,
+        startAt: t,
+        endAt: t + dur,
+        allDay: false as const,
+        status: "confirmed" as const,
+        syncedAt: 0, createdAt: 0, updatedAt: 0,
+        isCron: true as const,
+        jobEnabled: enabled,
+      });
+
+      if (sched?.kind === "every" && sched.everyMs > 0) {
+        let t = job.nextRunAt ?? Date.now();
+        // Walk back to find first occurrence on or before this day
+        while (t - sched.everyMs >= ds) t -= sched.everyMs;
+        while (t <= de) {
+          if (t >= ds) results.push(makeEv(t));
+          t += sched.everyMs;
+        }
+      } else {
+        const at = job.nextRunAt ?? (sched?.kind === "at" ? sched.at : undefined);
+        if (at && at >= ds && at <= de) results.push(makeEv(at));
+      }
+    }
+    return results;
+  }
+
+  private eventsForDay(day: Date): Array<CalendarEvent & { isCron?: true; jobEnabled?: boolean }> {
+    const calEvents = this.app.calendarEvents || [];
+    const filtered = calEvents.filter((ev) => {
       if (ev.allDay) {
         const startDay = new Date(ev.startAt); startDay.setHours(0, 0, 0, 0);
         const endDay = new Date(ev.endAt); endDay.setHours(0, 0, 0, 0);
@@ -340,6 +392,7 @@ export class MCCalendar extends LitElement {
       }
       return this.sameDay(new Date(ev.startAt), day);
     });
+    return [...filtered, ...this.cronEventsForDay(day)];
   }
 
   private calcEventTop(ev: CalendarEvent): number {
@@ -374,13 +427,15 @@ export class MCCalendar extends LitElement {
     return result;
   }
 
-  private evStatusClass(ev: CalendarEvent): string {
+  private evStatusClass(ev: CalendarEvent & { isCron?: boolean; jobEnabled?: boolean }): string {
+    if ((ev as any).isCron) return (ev as any).jobEnabled === false ? "ev-cron ev-cron-disabled" : "ev-cron";
     if (ev.status === "cancelled") return "ev-cancelled";
     if (ev.status === "tentative") return "ev-tentative";
     return "";
   }
 
-  private chipClass(ev: CalendarEvent): string {
+  private chipClass(ev: CalendarEvent & { isCron?: boolean; jobEnabled?: boolean }): string {
+    if ((ev as any).isCron) return (ev as any).jobEnabled === false ? "chip chip-cron chip-cron-disabled" : "chip chip-cron";
     if (ev.status === "cancelled") return "chip chip-cancelled";
     if (ev.status === "tentative") return "chip chip-tentative";
     return "chip";
@@ -510,12 +565,6 @@ export class MCCalendar extends LitElement {
   // ── Calendar section ─────────────────────────────────────────────────────
 
   private renderCalendarSection() {
-    const events = this.app.calendarEvents || [];
-    const hasIntegration = this.app.integrations?.some(
-      (i) => i.type === "google_calendar" && i.status === "connected"
-    );
-    if (events.length === 0 && !hasIntegration) return nothing;
-
     return html`
       <div class="cal-card">
         ${this.renderCalToolbar()}

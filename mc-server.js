@@ -500,6 +500,14 @@ const server = createServer(async (req, res) => {
         return;
     }
 
+    if (url === "/debug/me") {
+        const cookies = parseCookies(req.headers.cookie);
+        const decoded = await verifySession(cookies);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(decoded, null, 2));
+        return;
+    }
+
     if (url === "/auth/logout") {
         clearSessionCookie(res);
         res.writeHead(302, { Location: "/login" });
@@ -546,6 +554,8 @@ const server = createServer(async (req, res) => {
                             k.startsWith("is") || k === "role" || k === "roles"
                         )
                     );
+                    // sys_admin claim also grants isAdmin
+                    if (decoded.sys_admin) claims.isAdmin = true;
                     const adminEmails = (process.env.MC_ADMIN_EMAILS || "").split(",").map(e => e.trim()).filter(Boolean);
                     if (!claims.isAdmin && adminEmails.includes(decoded.email)) claims.isAdmin = true;
                     return claims;
