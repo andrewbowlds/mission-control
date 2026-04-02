@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   createGoogleOAuthStartUrl,
+  createFirestoreGoogleOAuthUrl,
   disconnectGoogleContacts,
   getGoogleConnectionStatus,
   handleGoogleOAuthCallback,
+  handleFirestoreGoogleCallback,
 } from "./google-contacts-auth.js";
 import { getGoogleSyncStatus, runGoogleContactsSync } from "./google-contacts-sync.js";
 import { getFirestoreSyncStatus, pushContactToFirestore, runFirestoreContactsSync } from "./firestore-contacts-sync.js";
@@ -78,6 +80,20 @@ function handleGoogleApi(req: IncomingMessage, res: ServerResponse, rawUrl: stri
     if (!code || !state) {
       res.writeHead(302, { Location: `${MC_PREFIX}?google_oauth=error` });
       res.end();
+      return true;
+    }
+
+    // Route to Firestore token saver if state has fsuid: prefix
+    if (state.startsWith("fsuid:")) {
+      void handleFirestoreGoogleCallback(code, state)
+        .then(() => {
+          res.writeHead(302, { Location: `${MC_PREFIX}?google_oauth=connected` });
+          res.end();
+        })
+        .catch(() => {
+          res.writeHead(302, { Location: `${MC_PREFIX}?google_oauth=error` });
+          res.end();
+        });
       return true;
     }
 

@@ -123,6 +123,15 @@ export class MCPeople extends LitElement {
     .msg-meta { font-size:10px; color:#64748b; margin-top:3px; }
     .msg-row.outbound .msg-meta { text-align:right; }
     .chat-empty { text-align:center; padding:32px; color:#475569; font-size:12px; }
+    .contact-avatar {
+      width: 30px; height: 30px; border-radius: 50%; object-fit: cover;
+      background: #1e1e2e; color: #a78bfa; font-size: 12px; font-weight: 600;
+      display: inline-flex; align-items: center; justify-content: center;
+      flex-shrink: 0; overflow: hidden; border: 1px solid #2d2d44; vertical-align: middle;
+    }
+    .contact-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+    .name-cell { display: flex; align-items: center; gap: 8px; }
+    .name-cell-text { display: flex; flex-direction: column; }
   `;
 
   private get selectedPerson(): Person | undefined { return this.app.people.find((p) => p.id === this.selectedId); }
@@ -361,13 +370,35 @@ export class MCPeople extends LitElement {
 
   private renderList() {
     const people = this.filteredPeople;
-    return html`${this.googleError ? html`<div class="err">Google sync: ${this.googleError}</div>` : nothing}
-      <div class="oauth-card"><div class="oauth-meta"><strong>Google Contacts</strong>${this.googleStatus.connected ? html`<span>Connected${this.googleStatus.accountEmail ? html` as ${this.googleStatus.accountEmail}` : ""}</span>` : html`<span>Disconnected</span>`}</div><div><button class="primary" @click=${() => this.connectGoogle()}>${this.googleStatus.connected ? "Reconnect Google" : "Sign in with Google"}</button>${this.googleStatus.connected ? html`<button @click=${() => this.syncNow()} ?disabled=${this.googleSyncing}>${this.googleSyncing ? "Syncing…" : "Sync now"}</button><button @click=${() => this.disconnectGoogle()}>Disconnect</button>` : nothing}</div></div>
+    const ts = this.app.googleTokenStatus;
+    const showWarning = ts && (!ts.connected || ts.expired);
+    return html`
+      ${showWarning ? html`
+        <div class="oauth-card" style="border-color:#92400e; background:#1a0f00;">
+          <div class="oauth-meta" style="color:#fbbf24;">
+            <strong>Google Contacts disconnected</strong>
+            <span>${ts!.expired ? "Your Google token has expired — contacts may be out of date." : "Google Contacts is not connected."}</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="primary" @click=${() => void this.app.connectGoogleContacts()}>Reconnect Google</button>
+            <a href="https://agentnet.edprealty.com" target="_blank" style="color:#a78bfa;font-size:12px;text-decoration:none;">or connect in AgentNet ↗</a>
+          </div>
+        </div>
+      ` : html`
+        <div class="oauth-card" style="font-size:12px; color:#64748b;">
+          <span>Contacts synced from EDP AgentNet via Google Contacts${ts?.accountEmail ? ` (${ts.accountEmail})` : ""}.</span>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button @click=${() => void this.app.connectGoogleContacts()} style="font-size:11px;padding:3px 8px;">Reconnect</button>
+            <a href="https://agentnet.edprealty.com" target="_blank" style="color:#a78bfa;text-decoration:none;">AgentNet ↗</a>
+          </div>
+        </div>
+      `}
       <div class="count"><span>${this.app.people.length} contacts</span></div>
       <div class="toolbar"><input type="search" placeholder="Search by name, email, company, role, or tag..." .value=${this.searchQuery} @input=${(e: any) => (this.searchQuery = e.target.value)} /><select @change=${(e: any) => (this.filterStatus = e.target.value)}><option value="">All statuses</option>${STATUS_OPTIONS.map((s) => html`<option value=${s} ?selected=${this.filterStatus === s}>${s}</option>`)}</select><button class="primary" @click=${() => (this.viewMode = "add")}>+ Add Contact</button></div>
       ${people.length === 0 ? html`<div class="empty">No contacts match your filters.</div>` : html`<table><thead><tr><th>Name</th><th>Phone</th><th>Company</th><th>Status</th><th>Tags</th><th>Last Contact</th></tr></thead><tbody>${people.map((p) => {
         const phoneList = p.phones && p.phones.length > 0 ? p.phones : (p.phone ? [{ value: p.phone, type: "mobile", primary: true }] : []);
-        return html`<tr class="clickable" @click=${() => this.openDetail(p)}><td><div>${p.name}</div>${p.email ? html`<div class="muted">${p.email}</div>` : nothing}</td><td class="muted" style="font-size:12px;">${phoneList.length > 0 ? phoneList.map((ph, i) => html`${i > 0 ? html`<br/>` : nothing}${ph.value}`) : "-"}</td><td>${p.company || "-"}</td><td>${this.statusBadge(p.status)}</td><td>${p.tags.length ? html`<span class="tags">${p.tags.map((t) => html`<span class="tag">${t}</span>`)}</span>` : "-"}</td><td class="muted">${this.fmtDate(p.lastContactedAt)}</td></tr>`;
+        const initials = p.name.trim().split(/\s+/).map((w: string) => w[0]).slice(0, 2).join("").toUpperCase();
+        return html`<tr class="clickable" @click=${() => this.openDetail(p)}><td><div class="name-cell"><div class="contact-avatar">${(p as any).photoUrl ? html`<img src="${(p as any).photoUrl}" referrerpolicy="no-referrer" alt="${p.name}">` : initials}</div><div class="name-cell-text"><div>${p.name}</div>${p.email ? html`<div class="muted">${p.email}</div>` : nothing}</div></div></td><td class="muted" style="font-size:12px;">${phoneList.length > 0 ? phoneList.map((ph, i) => html`${i > 0 ? html`<br/>` : nothing}${ph.value}`) : "-"}</td><td>${p.company || "-"}</td><td>${this.statusBadge(p.status)}</td><td>${p.tags.length ? html`<span class="tags">${p.tags.map((t) => html`<span class="tag">${t}</span>`)}</span>` : "-"}</td><td class="muted">${this.fmtDate(p.lastContactedAt)}</td></tr>`;
       })}</tbody></table>`}`;
   }
 

@@ -115,7 +115,8 @@ import {
   syncGoogleContactsIntegration,
   pushGoogleContact,
 } from "./integrations/google-contacts.js";
-import { createGoogleOAuthStartUrl } from "./google-contacts-auth.js";
+import { createGoogleOAuthStartUrl, createFirestoreGoogleOAuthUrl } from "./google-contacts-auth.js";
+import { listPeopleFromFirestore, getGoogleTokenStatus } from "./firestore-contacts.js";
 import {
   connectGitHub,
   disconnectGitHub,
@@ -581,8 +582,32 @@ export function registerMcMethods(api: OpenClawPluginApi): void {
 
   // ── People (CRM) ───────────────────────────────────────────────────────────
 
-  register("mc.people.list", ({ respond }) => {
-    respond(true, { people: listPeople() });
+  register("mc.people.list", async ({ params, respond }) => {
+    const uid = typeof params.uid === "string" ? params.uid.trim() : "";
+    if (uid) {
+      try {
+        const [people, tokenStatus] = await Promise.all([
+          listPeopleFromFirestore(uid),
+          getGoogleTokenStatus(uid),
+        ]);
+        respond(true, { people, source: "firestore", tokenStatus });
+        return;
+      } catch (err) {
+        console.error("[mc.people.list] Firestore fetch failed, falling back to local:", err);
+      }
+    }
+    respond(true, { people: listPeople(), source: "local", tokenStatus: null });
+  });
+
+  register("mc.people.google.connectUrl", ({ params, respond }) => {
+    const uid = typeof params.uid === "string" ? params.uid.trim() : "";
+    if (!uid) return badRequest(respond, "uid is required");
+    try {
+      const { url } = createFirestoreGoogleOAuthUrl(uid);
+      respond(true, { url });
+    } catch (err) {
+      respond(false, { error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   register("mc.people.get", ({ params, respond }) => {

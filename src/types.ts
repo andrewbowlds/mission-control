@@ -143,6 +143,7 @@ export type Person = {
   tags: string[];
   notes?: string;
   googleNotesRaw?: string;
+  photoUrl?: string;
   sourcePrimary?: string;
   lastContactedAt?: number;
   createdAt: number;

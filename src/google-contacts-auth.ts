@@ -173,6 +173,91 @@ export function createGoogleOAuthStartUrl(): { url: string } {
   return { url: authUrl.toString() };
 }
 
+// ── Firestore-backed OAuth (shared with AgentNet) ───────────────────────────
+// State format: "fsuid:<uid>:<nonce>"
+const GOOGLE_SCOPE_FULL = [
+  "openid", "email", "profile",
+  "https://www.googleapis.com/auth/contacts",
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.modify",
+  "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/gmail.compose",
+  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/calendar.events",
+].join(" ");
+
+export function createFirestoreGoogleOAuthUrl(uid: string): { url: string } {
+  const cfg = getOAuthConfig();
+  if (!cfg) throw new Error("Google OAuth is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI.");
+  const nonce = randomUUID();
+  const state = `fsuid:${uid}:${nonce}`;
+  const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  authUrl.searchParams.set("client_id", cfg.clientId);
+  authUrl.searchParams.set("redirect_uri", cfg.redirectUri);
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("scope", GOOGLE_SCOPE_FULL);
+  authUrl.searchParams.set("access_type", "offline");
+  authUrl.searchParams.set("prompt", "consent");
+  authUrl.searchParams.set("state", state);
+  return { url: authUrl.toString() };
+}
+
+export async function handleFirestoreGoogleCallback(code: string, state: string): Promise<void> {
+  const cfg = getOAuthConfig();
+  if (!cfg) throw new Error("Google OAuth is not configured.");
+
+  const parts = state.split(":");
+  if (parts[0] !== "fsuid" || !parts[1]) throw new Error("Invalid OAuth state.");
+  const uid = parts[1];
+
+  const body = new URLSearchParams({
+    code,
+    client_id: cfg.clientId,
+    client_secret: cfg.clientSecret,
+    redirect_uri: cfg.redirectUri,
+    grant_type: "authorization_code",
+  });
+
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+
+  if (!tokenRes.ok) {
+    const details = await tokenRes.text().catch(() => "");
+    throw new Error(`Token exchange failed (${tokenRes.status}): ${details.slice(0, 240)}`);
+  }
+
+  const token = (await tokenRes.json()) as TokenResponse;
+  const expiresAt = Date.now() + Math.max(1, token.expires_in || 0) * 1000;
+  const scopesGranted = token.scope ?? GOOGLE_SCOPE_FULL;
+
+  // Save to Firestore at the same path AgentNet uses: /users/{uid}
+  const { getEdpFirestore } = await import("./firestore-sms.js");
+  const db = await getEdpFirestore();
+  const nowIso = new Date().toISOString();
+
+  const payload: Record<string, unknown> = {
+    googleTokens: {
+      accessToken: token.access_token,
+      ...(token.refresh_token ? { refreshToken: token.refresh_token } : {}),
+      expiresAt,
+      scope: scopesGranted,
+    },
+    googleLinkedAt: nowIso,
+  };
+
+  for (const key of ["gmail", "gcalendar", "gtasks", "gmeet", "gvoice", "gcontacts"]) {
+    payload[`integrations.${key}.connected`] = true;
+    payload[`integrations.${key}.enabled`] = true;
+    payload[`integrations.${key}.scopesGranted`] = scopesGranted;
+    payload[`integrations.${key}.lastSyncedAt`] = nowIso;
+  }
+
+  await db.collection("users").doc(uid).set(payload, { merge: true });
+}
+
 export async function handleGoogleOAuthCallback(code: string, state: string): Promise<void> {
   const cfg = getOAuthConfig();
   if (!cfg) {

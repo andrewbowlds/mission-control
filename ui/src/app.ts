@@ -175,6 +175,7 @@ export type Person = {
   tags: string[];
   notes?: string;
   googleNotesRaw?: string;
+  photoUrl?: string;
   sourcePrimary?: string;
   lastContactedAt?: number;
   createdAt: number;
@@ -511,6 +512,8 @@ export type AppFacade = {
   tasks: Task[];
   rooms: Room[];
   people: Person[];
+  googleTokenStatus: { connected: boolean; expired: boolean; expiresAt: number | null; accountEmail: string | null } | null;
+  connectGoogleContacts(): Promise<void>;
   memoryFiles: MemorySummary[];
   cronJobs: any[];
   cronSource: string;
@@ -874,6 +877,7 @@ export class McApp extends LitElement {
   @state() private notificationsOpen = false;
   @state() private delegations: MCDelegation[] = [];
   @state() private profileMenuOpen = false;
+  @state() private googleTokenStatus: { connected: boolean; expired: boolean; expiresAt: number | null; accountEmail: string | null } | null = null;
   @state() private showingGatewayPanel = false;
   @state() private gwPanelSaving = false;
   @state() private gwPanelError = "";
@@ -1069,8 +1073,10 @@ export class McApp extends LitElement {
   }
 
   private async loadPeople(): Promise<void> {
-    const res = await this.gw.request<{ people: Person[] }>("mc.people.list", {}).catch(() => null);
+    const uid = window.__mcBootstrap?.user?.uid;
+    const res = await this.gw.request<{ people: Person[]; tokenStatus: typeof this.googleTokenStatus }>("mc.people.list", uid ? { uid } : {}).catch(() => null);
     this.people = res?.people ?? [];
+    if (res?.tokenStatus !== undefined) this.googleTokenStatus = res.tokenStatus;
   }
 
   private async loadSubagents(): Promise<void> {
@@ -1413,6 +1419,13 @@ export class McApp extends LitElement {
 
   // ── People operations ──────────────────────────────────────────────────────
 
+  async connectGoogleContacts(): Promise<void> {
+    const uid = window.__mcBootstrap?.user?.uid;
+    if (!uid) return;
+    const res = await this.gw.request<{ url: string }>("mc.people.google.connectUrl", { uid }).catch(() => null);
+    if (res?.url) window.location.href = res.url;
+  }
+
   async createPerson(data: Omit<Person, "id" | "createdAt" | "updatedAt">): Promise<Person | undefined> {
     const res = await this.gw.request<{ person: Person }>("mc.people.create", data).catch(() => null);
     if (res?.person) this.people = [res.person, ...this.people];
@@ -1738,6 +1751,8 @@ export class McApp extends LitElement {
       tasks: this.tasks,
       rooms: this.rooms,
       people: this.people,
+      googleTokenStatus: this.googleTokenStatus,
+      connectGoogleContacts: () => this.connectGoogleContacts(),
       memoryFiles: this.memoryFiles,
       cronJobs: this.cronJobs,
       cronSource: this.cronSource,
