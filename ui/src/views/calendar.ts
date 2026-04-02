@@ -9,6 +9,10 @@ export class MCCalendar extends LitElement {
   @state() private showModal = false;
   @state() private editingJobId: string | null = null;
 
+  // Calendar navigation state
+  @state() private calView: "day" | "week" | "month" = "week";
+  @state() private calAnchor: Date = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
+
   // Form state
   @state() private formName = "";
   @state() private formScheduleType: "cron" | "every" | "at" = "cron";
@@ -19,9 +23,24 @@ export class MCCalendar extends LitElement {
   @state() private formDeliveryMethod = "gateway";
   @state() private formDeliveryTarget = "";
 
+  private readonly HOUR_H = 52; // px per hour in time grid
+  private _pendingScrollToNow = true;
+
+  protected updated(): void {
+    if (this._pendingScrollToNow && this.calView !== "month") {
+      const el = this.shadowRoot?.querySelector(".time-scroll") as HTMLElement | null;
+      if (el) {
+        const now = new Date();
+        el.scrollTop = Math.max(0, (now.getHours() + now.getMinutes() / 60) * this.HOUR_H - 100);
+        this._pendingScrollToNow = false;
+      }
+    }
+  }
+
   static styles = css`
     :host { display: block; height: 100%; overflow: auto; padding: 20px; box-sizing: border-box; }
 
+    /* ── Shared ──────────────────────────────────────────────────── */
     .card {
       background: #111118; border: 1px solid #1e1e2e; border-radius: 10px;
       padding: 16px; max-width: 900px;
@@ -47,7 +66,6 @@ export class MCCalendar extends LitElement {
     .job-actions { display: flex; gap: 4px; flex-shrink: 0; margin-top: 2px; }
     .empty { text-align: center; padding: 30px; color: #475569; }
 
-    /* Linked workflow indicator */
     .linked-wf {
       font-size: 11px; color: #a78bfa; margin-top: 4px;
       display: flex; align-items: center; gap: 4px;
@@ -88,33 +106,287 @@ export class MCCalendar extends LitElement {
     .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
     .hint { font-size: 11px; color: #475569; margin-top: 4px; }
 
-    /* ── Calendar Events ──────────────────────────────────────── */
-    .events-card { margin-top: 20px; }
-    .day-group { margin-bottom: 16px; }
-    .day-label {
-      font-size: 12px; font-weight: 600; color: #a78bfa;
-      text-transform: uppercase; letter-spacing: 0.06em;
-      margin-bottom: 6px; padding-bottom: 4px;
-      border-bottom: 1px solid #1a1a2a;
+    /* ── Calendar card ────────────────────────────────────────────── */
+    .cal-card {
+      background: #111118; border: 1px solid #1e1e2e; border-radius: 10px;
+      margin-top: 20px; max-width: 900px; overflow: hidden;
     }
-    .day-label.today { color: #22c55e; }
-    .event {
-      display: flex; align-items: center; gap: 10px;
-      padding: 8px 0; border-bottom: 1px solid #0f0f1a;
-      font-size: 13px;
+
+    /* Toolbar */
+    .cal-toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; border-bottom: 1px solid #1e1e2e; gap: 8px; flex-wrap: wrap;
     }
-    .event:last-child { border-bottom: none; }
-    .event-time {
-      font-size: 11px; color: #64748b; font-family: monospace;
-      min-width: 100px; flex-shrink: 0;
+    .cal-nav { display: flex; align-items: center; gap: 6px; }
+    .cal-nav button { font-size: 16px; padding: 2px 10px; line-height: 1; }
+    .cal-title { font-size: 14px; font-weight: 600; min-width: 180px; text-align: center; }
+    .cal-controls { display: flex; align-items: center; gap: 6px; }
+    .view-toggle { display: flex; border: 1px solid #2d2d44; border-radius: 6px; overflow: hidden; }
+    .view-toggle button { border: none; border-right: 1px solid #2d2d44; border-radius: 0; }
+    .view-toggle button:last-child { border-right: none; }
+    .btn-active { background: #3b1d8a !important; color: #c4b5fd !important; }
+
+    /* ── Week / Day header row ──────────────────────────────────── */
+    .week-head {
+      display: grid; border-bottom: 1px solid #1e1e2e;
     }
-    .event-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .event-location { font-size: 11px; color: #475569; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .event-linked { font-size: 9px; color: #a78bfa; padding: 2px 6px; background: #1e1035; border-radius: 4px; }
-    .event-allday { font-size: 10px; color: #818cf8; }
-    .event-cancelled { text-decoration: line-through; opacity: 0.5; }
-    .event-tentative { opacity: 0.7; font-style: italic; }
+    .time-gutter { width: 52px; flex-shrink: 0; }
+    .day-head {
+      display: flex; flex-direction: column; align-items: center;
+      padding: 6px 4px; gap: 3px; border-left: 1px solid #1a1a2a;
+    }
+    .day-head.today-col { background: rgba(124,58,237,0.05); }
+    .day-name { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+    .day-num {
+      font-size: 18px; font-weight: 300; line-height: 1;
+      width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+    }
+    .day-num.today {
+      background: #7c3aed; color: white; border-radius: 50%;
+      font-size: 14px; font-weight: 600;
+    }
+
+    /* All-day row */
+    .allday-row { display: grid; border-bottom: 1px solid #1e1e2e; min-height: 26px; }
+    .allday-label {
+      font-size: 9px; color: #475569; text-align: right; padding: 4px 6px 0 0;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .allday-cell { border-left: 1px solid #1a1a2a; padding: 2px; }
+
+    /* Event chips (all-day + month view) */
+    .chip {
+      font-size: 10px; background: #1e1035; border-left: 2px solid #a78bfa;
+      color: #e2e8f0; padding: 1px 5px; border-radius: 2px;
+      margin-bottom: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .chip-tentative { border-left-color: #ca8a04; background: #1a1400; opacity: 0.8; }
+    .chip-cancelled { border-left-color: #475569; background: #0f0f1a; opacity: 0.5; text-decoration: line-through; }
+
+    /* Time grid */
+    .time-scroll { overflow-y: auto; height: 560px; }
+    .time-grid { display: grid; }
+    .time-col { /* stacks hour labels */ }
+    .hour-label {
+      height: 52px; font-size: 10px; color: #475569;
+      text-align: right; padding-right: 8px; padding-top: 0;
+      box-sizing: border-box; display: flex; align-items: flex-start;
+      justify-content: flex-end; padding-top: 2px;
+    }
+    .day-col { position: relative; border-left: 1px solid #1a1a2a; }
+    .day-col.today-col { background: rgba(124,58,237,0.04); }
+    .hour-slot { height: 52px; border-bottom: 1px solid #0d0d1a; box-sizing: border-box; }
+
+    /* Current time indicator */
+    .now-line {
+      position: absolute; left: 0; right: 0; height: 2px;
+      background: #ef4444; z-index: 2; pointer-events: none;
+    }
+    .now-line::before {
+      content: ''; position: absolute; left: -4px; top: -4px;
+      width: 10px; height: 10px; background: #ef4444; border-radius: 50%;
+    }
+
+    /* Timed events */
+    .cal-event-timed {
+      position: absolute;
+      background: #1e1035; border: 1px solid #6d28d9; border-left: 3px solid #a78bfa;
+      border-radius: 4px; padding: 2px 5px; font-size: 11px;
+      overflow: hidden; z-index: 1; box-sizing: border-box; cursor: default;
+    }
+    .cal-event-timed:hover { background: #2d1a50; z-index: 3; }
+    .cal-event-timed.ev-tentative {
+      border-left-color: #ca8a04; border-color: #92400e; background: #1a1000; opacity: 0.85;
+    }
+    .cal-event-timed.ev-cancelled {
+      border-left-color: #475569; border-color: #1e293b; background: #0a0a10; opacity: 0.5;
+    }
+    .ev-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ev-loc { font-size: 9px; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* ── Month View ─────────────────────────────────────────────── */
+    .month-head { display: grid; grid-template-columns: repeat(7, 1fr); border-bottom: 1px solid #1e1e2e; }
+    .month-day-head {
+      text-align: center; font-size: 10px; color: #475569;
+      text-transform: uppercase; letter-spacing: 0.05em; padding: 8px 0;
+    }
+    .month-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+    .month-cell {
+      min-height: 88px; border-bottom: 1px solid #0d0d1a; border-right: 1px solid #0d0d1a;
+      padding: 4px; box-sizing: border-box;
+    }
+    .month-cell:nth-child(7n) { border-right: none; }
+    .month-cell.other-month { opacity: 0.35; }
+    .month-cell.today-cell { background: rgba(124,58,237,0.06); }
+    .month-date {
+      font-size: 12px; font-weight: 500;
+      width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+      margin-bottom: 2px;
+    }
+    .month-date.today {
+      background: #7c3aed; color: white; border-radius: 50%; font-weight: 600;
+    }
+    .month-more { font-size: 9px; color: #64748b; padding: 1px 4px; }
+
+    /* ── Empty state ────────────────────────────────────────────── */
+    .cal-empty { text-align: center; padding: 40px; color: #475569; }
   `;
+
+  // ── Navigation ──────────────────────────────────────────────────────────
+
+  private navPrev(): void {
+    const d = new Date(this.calAnchor);
+    if (this.calView === "day") d.setDate(d.getDate() - 1);
+    else if (this.calView === "week") d.setDate(d.getDate() - 7);
+    else { d.setMonth(d.getMonth() - 1); d.setDate(1); }
+    this.calAnchor = d;
+    this._pendingScrollToNow = false;
+  }
+
+  private navNext(): void {
+    const d = new Date(this.calAnchor);
+    if (this.calView === "day") d.setDate(d.getDate() + 1);
+    else if (this.calView === "week") d.setDate(d.getDate() + 7);
+    else { d.setMonth(d.getMonth() + 1); d.setDate(1); }
+    this.calAnchor = d;
+    this._pendingScrollToNow = false;
+  }
+
+  private goToday(): void {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    this.calAnchor = d;
+    this._pendingScrollToNow = true;
+  }
+
+  private setView(v: "day" | "week" | "month"): void {
+    this.calView = v;
+    this._pendingScrollToNow = true;
+  }
+
+  // ── Date helpers ─────────────────────────────────────────────────────────
+
+  private sameDay(a: Date, b: Date): boolean {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  }
+
+  private isToday(d: Date): boolean { return this.sameDay(d, new Date()); }
+
+  private getWeekDays(): Date[] {
+    const anchor = new Date(this.calAnchor);
+    const sunday = new Date(anchor);
+    sunday.setDate(anchor.getDate() - anchor.getDay());
+    sunday.setHours(0, 0, 0, 0);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(sunday);
+      d.setDate(sunday.getDate() + i);
+      return d;
+    });
+  }
+
+  private getMonthWeeks(): Date[][] {
+    const year = this.calAnchor.getFullYear();
+    const month = this.calAnchor.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const gridStart = new Date(firstDay);
+    gridStart.setDate(1 - firstDay.getDay());
+    const weeks: Date[][] = [];
+    const cur = new Date(gridStart);
+    while (cur <= lastDay || weeks.length < 6) {
+      const week: Date[] = [];
+      for (let i = 0; i < 7; i++) { week.push(new Date(cur)); cur.setDate(cur.getDate() + 1); }
+      weeks.push(week);
+      if (weeks.length >= 6) break;
+    }
+    return weeks;
+  }
+
+  private getNavTitle(): string {
+    if (this.calView === "month") {
+      return this.calAnchor.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    }
+    if (this.calView === "day") {
+      return this.calAnchor.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    }
+    const days = this.getWeekDays();
+    const s = days[0], e = days[6];
+    if (s.getMonth() === e.getMonth()) {
+      return `${s.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${e.getDate()}, ${e.getFullYear()}`;
+    }
+    if (s.getFullYear() === e.getFullYear()) {
+      return `${s.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${e.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${e.getFullYear()}`;
+    }
+    return `${s.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })} – ${e.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+  }
+
+  private fmtHour(h: number): string {
+    if (h === 0) return "12 AM";
+    if (h < 12) return `${h} AM`;
+    if (h === 12) return "12 PM";
+    return `${h - 12} PM`;
+  }
+
+  // ── Event helpers ────────────────────────────────────────────────────────
+
+  private eventsForDay(day: Date): CalendarEvent[] {
+    const events = this.app.calendarEvents || [];
+    return events.filter((ev) => {
+      if (ev.allDay) {
+        const startDay = new Date(ev.startAt); startDay.setHours(0, 0, 0, 0);
+        const endDay = new Date(ev.endAt); endDay.setHours(0, 0, 0, 0);
+        const d = new Date(day); d.setHours(0, 0, 0, 0);
+        return d >= startDay && d < endDay;
+      }
+      return this.sameDay(new Date(ev.startAt), day);
+    });
+  }
+
+  private calcEventTop(ev: CalendarEvent): number {
+    const d = new Date(ev.startAt);
+    return (d.getHours() + d.getMinutes() / 60) * this.HOUR_H;
+  }
+
+  private calcEventHeight(ev: CalendarEvent): number {
+    const dur = (ev.endAt - ev.startAt) / 3600000;
+    return Math.max(dur * this.HOUR_H, 20);
+  }
+
+  private layoutTimedEvents(events: CalendarEvent[]): Array<{ ev: CalendarEvent; col: number; cols: number }> {
+    const sorted = [...events].sort((a, b) => a.startAt - b.startAt);
+    const laneEnds: number[] = [];
+    const result: Array<{ ev: CalendarEvent; col: number; cols: number }> = [];
+
+    for (const ev of sorted) {
+      let lane = laneEnds.findIndex((end) => end <= ev.startAt);
+      if (lane === -1) lane = laneEnds.length;
+      laneEnds[lane] = ev.endAt;
+      result.push({ ev, col: lane, cols: 0 });
+    }
+
+    for (const item of result) {
+      const overlapping = result.filter(
+        (o) => o.ev.startAt < item.ev.endAt && o.ev.endAt > item.ev.startAt
+      );
+      item.cols = overlapping.reduce((max, o) => Math.max(max, o.col), 0) + 1;
+    }
+
+    return result;
+  }
+
+  private evStatusClass(ev: CalendarEvent): string {
+    if (ev.status === "cancelled") return "ev-cancelled";
+    if (ev.status === "tentative") return "ev-tentative";
+    return "";
+  }
+
+  private chipClass(ev: CalendarEvent): string {
+    if (ev.status === "cancelled") return "chip chip-cancelled";
+    if (ev.status === "tentative") return "chip chip-tentative";
+    return "chip";
+  }
+
+  // ── Cron helpers (unchanged) ─────────────────────────────────────────────
 
   private fmtTs(ts?: number): string {
     if (!ts) return "n/a";
@@ -144,8 +416,6 @@ export class MCCalendar extends LitElement {
     return this.app.workflows.find((w) => w.cronJobId === jobId)?.name;
   }
 
-  // ── Create/Edit ────────────────────────────────────────────────────────
-
   private openCreate(): void {
     this.editingJobId = null;
     this.formName = "";
@@ -165,8 +435,6 @@ export class MCCalendar extends LitElement {
     this.formDeliveryMethod = "gateway";
     this.formDeliveryTarget = "";
     this.formTimezone = "UTC";
-
-    // Parse schedule
     const sched = job.schedule;
     if (sched?.kind === "every") {
       this.formScheduleType = "every";
@@ -179,14 +447,11 @@ export class MCCalendar extends LitElement {
       this.formCronExpr = sched?.expr ?? job.expression ?? "";
       this.formTimezone = sched?.tz ?? "UTC";
     }
-
-    // Parse delivery
     const delivery = job.delivery;
     if (delivery) {
       this.formDeliveryMethod = delivery.method ?? "gateway";
       this.formDeliveryTarget = delivery.target ?? "";
     }
-
     this.showModal = true;
   }
 
@@ -201,11 +466,7 @@ export class MCCalendar extends LitElement {
   private async submit(): Promise<void> {
     if (!this.formName.trim()) return;
     const schedule = this.buildSchedule();
-    const delivery = {
-      method: this.formDeliveryMethod,
-      target: this.formDeliveryTarget || undefined,
-    };
-
+    const delivery = { method: this.formDeliveryMethod, target: this.formDeliveryTarget || undefined };
     if (this.editingJobId) {
       await this.app.updateCronJob(this.editingJobId, { name: this.formName.trim(), schedule, delivery });
     } else {
@@ -240,75 +501,172 @@ export class MCCalendar extends LitElement {
           : jobs.map((j: any) => this.renderJob(j))}
       </div>
 
-      ${this.renderCalendarEvents()}
+      ${this.renderCalendarSection()}
 
       ${this.showModal ? this.renderModal() : nothing}
     `;
   }
 
-  // ── Calendar Events ────────────────────────────────────────────────────
+  // ── Calendar section ─────────────────────────────────────────────────────
 
-  private groupEventsByDay(events: CalendarEvent[]): Map<string, CalendarEvent[]> {
-    const groups = new Map<string, CalendarEvent[]>();
-    for (const ev of events) {
-      const d = new Date(ev.startAt);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(ev);
-    }
-    return groups;
-  }
-
-  private fmtEventTime(ev: CalendarEvent): string {
-    if (ev.allDay) return "All day";
-    const s = new Date(ev.startAt);
-    const e = new Date(ev.endAt);
-    return `${s.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} – ${e.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-  }
-
-  private fmtDayLabel(key: string): { label: string; isToday: boolean } {
-    const d = new Date(key + "T00:00:00");
-    const now = new Date();
-    const isToday = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-    const label = isToday ? "Today" : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-    return { label, isToday };
-  }
-
-  private renderCalendarEvents() {
+  private renderCalendarSection() {
     const events = this.app.calendarEvents || [];
-    if (events.length === 0 && !this.app.integrations?.some((i) => i.type === "google_calendar" && i.status === "connected")) {
-      return nothing;
-    }
+    const hasIntegration = this.app.integrations?.some(
+      (i) => i.type === "google_calendar" && i.status === "connected"
+    );
+    if (events.length === 0 && !hasIntegration) return nothing;
 
-    const grouped = this.groupEventsByDay(events);
     return html`
-      <div class="card events-card">
-        <div class="header">
-          <h2>Calendar Events</h2>
-          <span class="meta">${events.length} events</span>
-          <button @click=${() => void this.app.gcalSync()}>Sync</button>
-        </div>
-        ${events.length === 0
-          ? html`<div class="empty">No calendar events. Click Sync to fetch from Google Calendar.</div>`
-          : Array.from(grouped.entries()).map(([key, dayEvents]) => {
-              const { label, isToday } = this.fmtDayLabel(key);
-              return html`
-                <div class="day-group">
-                  <div class="day-label ${isToday ? "today" : ""}">${label}</div>
-                  ${dayEvents.map((ev) => html`
-                    <div class="event ${ev.status === "cancelled" ? "event-cancelled" : ev.status === "tentative" ? "event-tentative" : ""}">
-                      <span class="event-time">${this.fmtEventTime(ev)}</span>
-                      <span class="event-title">${ev.title}</span>
-                      ${ev.location ? html`<span class="event-location">${ev.location}</span>` : nothing}
-                      ${ev.taskId ? html`<span class="event-linked">Linked</span>` : nothing}
-                    </div>
-                  `)}
-                </div>
-              `;
-            })}
+      <div class="cal-card">
+        ${this.renderCalToolbar()}
+        ${this.calView === "month" ? this.renderMonthView() : this.renderTimeView(
+          this.calView === "week" ? this.getWeekDays() : [this.calAnchor]
+        )}
       </div>
     `;
   }
+
+  private renderCalToolbar() {
+    return html`
+      <div class="cal-toolbar">
+        <div class="cal-nav">
+          <button class="btn-sm" @click=${() => this.navPrev()}>&#8249;</button>
+          <span class="cal-title">${this.getNavTitle()}</span>
+          <button class="btn-sm" @click=${() => this.navNext()}>&#8250;</button>
+        </div>
+        <div class="cal-controls">
+          <button class="btn-sm" @click=${() => this.goToday()}>Today</button>
+          <div class="view-toggle">
+            ${(["day", "week", "month"] as const).map((v) => html`
+              <button
+                class="btn-sm ${this.calView === v ? "btn-active" : ""}"
+                @click=${() => this.setView(v)}
+              >${v[0].toUpperCase() + v.slice(1)}</button>
+            `)}
+          </div>
+          <button class="btn-sm" @click=${() => void this.app.gcalSync()}>Sync</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // ── Time view (week + day share this) ────────────────────────────────────
+
+  private renderTimeView(days: Date[]) {
+    const now = new Date();
+    const cols = `52px repeat(${days.length}, 1fr)`;
+
+    return html`
+      <!-- Day name + date header -->
+      <div class="week-head" style="grid-template-columns: ${cols}">
+        <div class="time-gutter"></div>
+        ${days.map((d) => html`
+          <div class="day-head ${this.isToday(d) ? "today-col" : ""}">
+            <span class="day-name">${d.toLocaleDateString(undefined, { weekday: "short" })}</span>
+            <span class="day-num ${this.isToday(d) ? "today" : ""}">${d.getDate()}</span>
+          </div>
+        `)}
+      </div>
+
+      <!-- All-day row -->
+      <div class="allday-row" style="grid-template-columns: ${cols}">
+        <div class="time-gutter allday-label">all‑day</div>
+        ${days.map((d) => html`
+          <div class="allday-cell">
+            ${this.eventsForDay(d)
+              .filter((ev) => ev.allDay)
+              .map((ev) => html`
+                <div class="${this.chipClass(ev)}" title="${ev.title}">${ev.title}</div>
+              `)}
+          </div>
+        `)}
+      </div>
+
+      <!-- Scrollable time grid -->
+      <div class="time-scroll">
+        <div class="time-grid" style="grid-template-columns: ${cols}">
+          <!-- Hour labels -->
+          <div class="time-col">
+            ${Array.from({ length: 24 }, (_, h) => html`
+              <div class="hour-label">${this.fmtHour(h)}</div>
+            `)}
+          </div>
+
+          <!-- Day columns -->
+          ${days.map((d) => {
+            const timed = this.eventsForDay(d).filter((ev) => !ev.allDay);
+            const laid = this.layoutTimedEvents(timed);
+            const todayCol = this.isToday(d);
+            return html`
+              <div class="day-col ${todayCol ? "today-col" : ""}">
+                ${Array.from({ length: 24 }, () => html`<div class="hour-slot"></div>`)}
+
+                ${todayCol ? html`
+                  <div class="now-line" style="top: ${(now.getHours() + now.getMinutes() / 60) * this.HOUR_H}px"></div>
+                ` : nothing}
+
+                ${laid.map(({ ev, col, cols: numCols }) => html`
+                  <div
+                    class="cal-event-timed ${this.evStatusClass(ev)}"
+                    style="
+                      top: ${this.calcEventTop(ev)}px;
+                      height: ${this.calcEventHeight(ev)}px;
+                      left: calc(${(col / numCols) * 100}% + 2px);
+                      width: calc(${(1 / numCols) * 100}% - 4px);
+                    "
+                    title="${ev.title}${ev.location ? `\n${ev.location}` : ""}"
+                  >
+                    <div class="ev-title">${ev.title}</div>
+                    ${ev.location ? html`<div class="ev-loc">${ev.location}</div>` : nothing}
+                  </div>
+                `)}
+              </div>
+            `;
+          })}
+        </div>
+      </div>
+    `;
+  }
+
+  // ── Month view ───────────────────────────────────────────────────────────
+
+  private renderMonthView() {
+    const year = this.calAnchor.getFullYear();
+    const month = this.calAnchor.getMonth();
+    const weeks = this.getMonthWeeks();
+
+    return html`
+      <div class="month-head">
+        ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => html`
+          <div class="month-day-head">${d}</div>
+        `)}
+      </div>
+      <div class="month-grid">
+        ${weeks.map((week) => week.map((d) => {
+          const dayEvents = this.eventsForDay(d);
+          const otherMonth = d.getMonth() !== month;
+          const todayCell = this.isToday(d);
+          const MAX_CHIPS = 3;
+          const visible = dayEvents.slice(0, MAX_CHIPS);
+          const overflow = dayEvents.length - MAX_CHIPS;
+
+          return html`
+            <div class="month-cell ${otherMonth ? "other-month" : ""} ${todayCell ? "today-cell" : ""}">
+              <div class="month-date ${todayCell ? "today" : ""}">${d.getDate()}</div>
+              ${visible.map((ev) => html`
+                <div class="${this.chipClass(ev)}" title="${ev.title}">
+                  ${!ev.allDay ? html`<span style="color:#64748b">${new Date(ev.startAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} </span>` : nothing}${ev.title}
+                </div>
+              `)}
+              ${overflow > 0 ? html`<div class="month-more">+${overflow} more</div>` : nothing}
+            </div>
+          `;
+        }))}
+      </div>
+    `;
+  }
+
+  // ── Cron job render helpers (unchanged) ──────────────────────────────────
 
   private renderJob(j: any) {
     const linkedWf = this.findLinkedWorkflow(j.id);

@@ -28,6 +28,7 @@ declare global {
         email: string;
         name: string;
         roles: Record<string, boolean | string>;
+        photoURL?: string | null;
         gatewayConnected: boolean;
       };
     };
@@ -750,7 +751,8 @@ export class McApp extends LitElement {
     .dot.connecting { background: #f59e0b; }
     .dot.connected  { background: #22c55e; }
     .dot.disconnected { background: #ef4444; }
-    .content { height: 100vh; flex: 1; overflow: hidden; }
+    .main-area { display: flex; flex-direction: column; flex: 1; height: 100vh; overflow: hidden; }
+    .content { flex: 1; overflow: hidden; }
     .bell-wrap { position: relative; margin-top: auto; padding: 8px 14px; }
     .bell-btn {
       background: none; border: none; color: #94a3b8; font-size: 18px;
@@ -803,6 +805,36 @@ export class McApp extends LitElement {
       cursor: pointer; padding: 2px 4px; float: right;
     }
     .notif-dismiss:hover { color: #ef4444; }
+
+    /* ── Profile avatar + dropdown ──────────────────────────────── */
+    .profile-wrap { position: fixed; top: 10px; right: 14px; z-index: 500; }
+    .avatar {
+      width: 32px; height: 32px; border-radius: 50%; cursor: pointer;
+      border: 2px solid #2d2d44; object-fit: cover;
+      display: flex; align-items: center; justify-content: center;
+      background: #1e1e2e; color: #a78bfa; font-size: 13px; font-weight: 600;
+      flex-shrink: 0; overflow: hidden;
+    }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+    .avatar:hover { border-color: #a78bfa; }
+    .profile-dropdown {
+      position: absolute; top: calc(100% + 8px); right: 0; z-index: 501;
+      background: #12121a; border: 1px solid #2d2d44; border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5); min-width: 180px; overflow: hidden;
+    }
+    .profile-dropdown-info {
+      padding: 10px 14px; border-bottom: 1px solid #1e1e2e;
+    }
+    .profile-dropdown-name { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+    .profile-dropdown-email { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .profile-dropdown-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 9px 14px; font-size: 13px; color: #94a3b8;
+      cursor: pointer; background: none; border: none; width: 100%; text-align: left;
+      font-family: inherit;
+    }
+    .profile-dropdown-item:hover { background: #1e1e2e; color: #e2e8f0; }
+    .profile-dropdown-item.danger:hover { background: #3b0a0a; color: #ef4444; }
   `;
 
   @state() private tab: Tab = "dashboard";
@@ -841,6 +873,7 @@ export class McApp extends LitElement {
   @state() private unreadCount = 0;
   @state() private notificationsOpen = false;
   @state() private delegations: MCDelegation[] = [];
+  @state() private profileMenuOpen = false;
   @state() private showingGatewayPanel = false;
   @state() private gwPanelSaving = false;
   @state() private gwPanelError = "";
@@ -1971,6 +2004,37 @@ export class McApp extends LitElement {
     return this.tasks.filter((t) => !["done", "cancelled"].includes(t.status)).length;
   }
 
+  private renderProfileAvatar() {
+    const user = window.__mcBootstrap?.user;
+    const photoURL = user?.photoURL;
+    const name = user?.name || user?.email || "";
+    const initials = name.split(/[\s@]/)[0]?.[0]?.toUpperCase() ?? "?";
+
+    return html`
+      <div class="profile-wrap">
+        <div class="avatar" @click=${(e: Event) => { e.stopPropagation(); this.profileMenuOpen = !this.profileMenuOpen; }}
+             title="${name}">
+          ${photoURL
+            ? html`<img src="${photoURL}" alt="${name}" referrerpolicy="no-referrer">`
+            : initials}
+        </div>
+        ${this.profileMenuOpen ? html`
+          <div class="profile-dropdown">
+            <div class="profile-dropdown-info">
+              <div class="profile-dropdown-name">${name}</div>
+              ${user?.email ? html`<div class="profile-dropdown-email">${user.email}</div>` : ""}
+            </div>
+            <a href="/auth/logout" style="text-decoration:none;">
+              <button class="profile-dropdown-item danger">
+                <span>&#x2192;</span> Sign out
+              </button>
+            </a>
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
+
   private get isAdmin(): boolean {
     return !!(window.__mcBootstrap?.user?.roles?.isAdmin);
   }
@@ -2061,22 +2125,25 @@ export class McApp extends LitElement {
           ${this.gwStatus === "connected" ? "Live" : this.gwStatus === "connecting" ? "Connecting..." : "Offline"}
         </div>
       </div>
-      <div class="content">
-        ${this.tab === "dashboard" ? html`<mc-dashboard .app=${facade}></mc-dashboard>` : ""}
-        ${this.tab === "tasks" ? html`<mc-tasks .app=${facade}></mc-tasks>` : ""}
-        ${this.tab === "approvals" ? html`<mc-approvals .app=${facade}></mc-approvals>` : ""}
-        ${this.tab === "chat" ? html`<mc-chat .app=${facade}></mc-chat>` : ""}
-        ${this.tab === "people" ? html`<mc-people .app=${facade}></mc-people>` : ""}
-        ${this.tab === "memory" ? html`<mc-memory .app=${facade}></mc-memory>` : ""}
-        ${this.tab === "calendar" ? html`<mc-calendar .app=${facade}></mc-calendar>` : ""}
-        ${this.tab === "team" ? html`<mc-team .app=${facade}></mc-team>` : ""}
-        ${this.tab === "trello" ? html`<mc-trello .app=${facade}></mc-trello>` : ""}
-        ${this.tab === "workflows" ? html`<mc-workflows .app=${facade}></mc-workflows>` : ""}
-        ${this.tab === "automations" ? html`<mc-automations .app=${facade}></mc-automations>` : ""}
-        ${this.tab === "analytics" ? html`<mc-analytics .app=${facade}></mc-analytics>` : ""}
-        ${this.tab === "integrations" ? html`<mc-integrations .app=${facade}></mc-integrations>` : ""}
-        ${this.tab === "live-logs" ? html`<mc-live-logs .client=${facade.gw}></mc-live-logs>` : ""}
-        ${this.tab === "omi" ? html`<mc-omi .app=${facade}></mc-omi>` : ""}
+      ${this.renderProfileAvatar()}
+      <div class="main-area" @click=${() => { if (this.profileMenuOpen) this.profileMenuOpen = false; }}>
+        <div class="content">
+          ${this.tab === "dashboard" ? html`<mc-dashboard .app=${facade}></mc-dashboard>` : ""}
+          ${this.tab === "tasks" ? html`<mc-tasks .app=${facade}></mc-tasks>` : ""}
+          ${this.tab === "approvals" ? html`<mc-approvals .app=${facade}></mc-approvals>` : ""}
+          ${this.tab === "chat" ? html`<mc-chat .app=${facade}></mc-chat>` : ""}
+          ${this.tab === "people" ? html`<mc-people .app=${facade}></mc-people>` : ""}
+          ${this.tab === "memory" ? html`<mc-memory .app=${facade}></mc-memory>` : ""}
+          ${this.tab === "calendar" ? html`<mc-calendar .app=${facade}></mc-calendar>` : ""}
+          ${this.tab === "team" ? html`<mc-team .app=${facade}></mc-team>` : ""}
+          ${this.tab === "trello" ? html`<mc-trello .app=${facade}></mc-trello>` : ""}
+          ${this.tab === "workflows" ? html`<mc-workflows .app=${facade}></mc-workflows>` : ""}
+          ${this.tab === "automations" ? html`<mc-automations .app=${facade}></mc-automations>` : ""}
+          ${this.tab === "analytics" ? html`<mc-analytics .app=${facade}></mc-analytics>` : ""}
+          ${this.tab === "integrations" ? html`<mc-integrations .app=${facade}></mc-integrations>` : ""}
+          ${this.tab === "live-logs" ? html`<mc-live-logs .client=${facade.gw}></mc-live-logs>` : ""}
+          ${this.tab === "omi" ? html`<mc-omi .app=${facade}></mc-omi>` : ""}
+        </div>
       </div>
     `;
   }

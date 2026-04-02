@@ -321,7 +321,7 @@ function loginPage(errorMsg = "") {
     }
 
     async function exchangeToken(user) {
-      const idToken = await user.getIdToken();
+      const idToken = await user.getIdToken(true); // force refresh to pick up latest custom claims
       const res = await fetch("/auth/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -537,12 +537,19 @@ const server = createServer(async (req, res) => {
                 uid: decoded.uid,
                 email: decoded.email,
                 name: decoded.name ?? decoded.email?.split("@")[0] ?? "",
+                photoURL: decoded.picture ?? null,
                 // Pass all custom claims as roles (isAdmin, isAgent, etc.)
-                roles: Object.fromEntries(
-                    Object.entries(decoded).filter(([k]) =>
-                        k.startsWith("is") || k === "role" || k === "roles"
-                    )
-                ),
+                // Also grant isAdmin if the email is in MC_ADMIN_EMAILS (comma-separated)
+                roles: (() => {
+                    const claims = Object.fromEntries(
+                        Object.entries(decoded).filter(([k]) =>
+                            k.startsWith("is") || k === "role" || k === "roles"
+                        )
+                    );
+                    const adminEmails = (process.env.MC_ADMIN_EMAILS || "").split(",").map(e => e.trim()).filter(Boolean);
+                    if (!claims.isAdmin && adminEmails.includes(decoded.email)) claims.isAdmin = true;
+                    return claims;
+                })(),
                 gatewayConnected: !!gwConn?.gatewayUrl,
             },
         };
